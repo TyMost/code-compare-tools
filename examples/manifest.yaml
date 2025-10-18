@@ -1,0 +1,75 @@
+totalLines: 502
+categories:
+  - name: 已迁移
+    ruleLabels:
+      - Migrated
+      - Channel-Mapping-Refactor
+    targetPercent: 60
+    actualPercent: 56.37
+    blocks:
+      - path: common/EncodingGateway.java
+        lines: 80
+        notes: >
+          方法签名保持稳定，仅替换为 encoder.encode 并补充 isEncoded
+          帮助演示 Syntax + Similarity 组合标签。
+      - path: common/TenantEncoder.java
+        lines: 34
+        notes: 重构后新增的集中编码器。
+      - path: dashboard/DashboardAggregator.java
+        lines: 88
+        notes: 展示全量迁移后统计逻辑的重写。
+      - path: integration/ChannelMappingRegistry.java
+        lines: 34
+        notes: 由 new HashMap 切换为 Map.copyOf 的典型示例。
+      - path: workflow/ApprovalWorkflow.java
+        lines: 47
+        notes: 结合编码器的审批工作流。
+  - name: 语法改造
+    ruleLabels:
+      - Syntax-Refactor
+    targetPercent: 19
+    actualPercent: 19.52
+    blocks:
+      - path: order/DiscountCalculator.java
+        lines: 51
+        notes: 由 LEGACY:: 前缀切换为 encoder.encode 的字段替换。
+      - path: order/OrderMapper.java
+        lines: 47
+        notes: 保留映射语义，仅替换拼接方式。
+  - name: 分片改造
+    ruleLabels:
+      - Shard-Refactor
+    targetPercent: 10
+    actualPercent: 11.16
+    blocks:
+      - path: shard/TenantShardResolver.java
+        lines: 56
+        notes: token.substring → encoder.decodeTenant 的改造示例。
+  - name: 配置改造
+    ruleLabels:
+      - Feature-Flag-Refactor
+    targetPercent: 5
+    actualPercent: 5.18
+    blocks:
+      - path: config/CheckoutConfiguration.java
+        lines: 20
+        notes: setNewCheckout → override 的典型调用替换。
+      - path: resources/config/checkout-feature.yml
+        lines: 6
+        notes: YAML 配置与代码保持一致。
+  - name: 未迁移
+    ruleLabels:
+      - Not-Migrated
+    targetPercent: 3
+    actualPercent: 2.99
+    blocks:
+      - path: legacy/LegacyPromotionService.java
+        lines: 15
+        notes: 仅存在于 projectA，用于模拟遗留保留面。
+  - name: 其他
+    targetPercent: 3
+    actualPercent: 4.78
+    blocks:
+      - path: integration/PlatformBridge.java
+        lines: 24
+        notes: 保持最小改动，用于剩余占比示例。

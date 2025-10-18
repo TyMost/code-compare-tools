@@ -1,0 +1,56 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: code-compare-tool-rebuild
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    com.example.codecompare.rebuild.agent.CodeBlockMigrationService: DEBUG
+
+migration:
+  project:
+    sources:
+      - code: projectA
+        path: ../examples/projectA
+    targets:
+      - code: projectB
+        path: ../examples/projectB
+  git:
+    enabled: false
+    base-branch: main
+    compare-branch: feature/migration
+  rules:
+    path: classpath:config/rules.yaml
+    reload-on-change: false
+  scan:
+    ignore-globs:
+      - ".git/**"
+      - ".idea/**"
+      - "node_modules/**"
+      - "build/**"
+      - "out/**"
+      - "target/**"
+      - "dist/**"
+      - ".gradle/**"
+      - "pom.xml"
+      - "*Test.java"
+  output:
+    report-directory: build/reports/migration
+  storage:
+    backend: file
+    location: build/storage
+    file-metadata-dir: file-metadata
+    diff-snapshot-dir: diff-snapshots
+    block-decision-dir: block-decisions
+    agent-suggestion-dir: agent-suggestions
+    pretty-print: true
+  agent:
+    annotation-template: classpath:migration/annotation-template.yml
