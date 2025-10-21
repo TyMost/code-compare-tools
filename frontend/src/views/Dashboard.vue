@@ -20,6 +20,13 @@
         >
           重新加载
         </el-button>
+        <el-button
+          type="success"
+          icon="el-icon-link"
+          @click="goToGitComparison"
+        >
+          Git 比对
+        </el-button>
       </template>
     </dashboard-header>
 
@@ -36,7 +43,7 @@
     </el-row>
 
     <batch-toolbar
-      v-model="excludedCategories"
+      v-model="selectedCategories"
       :selected-ids="selectedIds"
       :category-options="categoryOptions"
       :file-name="fileNameFilter"
@@ -93,19 +100,19 @@ export default {
       codeBlocks: (state) => state.codeBlocks,
       pagination: (state) => state.pagination,
       listLoading: (state) => state.loading,
+      categoryFilterState: (state) => state.filters.categories,
       selectedIds: (state) => state.selectedIds,
-      excludedCategoryFilterState: (state) =>
-        state.filters.excludeCategories,
       fileNameFilterState: (state) => state.filters.fileName,
     }),
     ...mapGetters('migration', ['categoryOptions']),
-    excludedCategories: {
+    selectedCategories: {
       get() {
-        return this.excludedCategoryFilterState;
+        return this.categoryFilterState;
       },
       set(value) {
         this.$store.commit('migration/SET_FILTERS', {
-          excludeCategories: value,
+          categories: value,
+          excludeCategories: [],
         });
       },
     },
@@ -199,7 +206,8 @@ export default {
     handleFilterChange(categoryKeys) {
       // 更新分类筛选后重置分页
       this.$store.dispatch('migration/fetchCodeBlocks', {
-        excludeCategories: categoryKeys,
+        categories: categoryKeys,
+        excludeCategories: [],
         resetPage: true,
       });
     },
@@ -223,6 +231,58 @@ export default {
     },
     handleViewDetail(id) {
       this.$router.push({ name: 'CodeBlockDetail', params: { id } });
+    },
+    goToGitComparison() {
+      const sourcePath = this.overview?.oldProjectPath || '';
+      const targetPath = this.overview?.newProjectPath || '';
+      const sourceKey = this.extractProjectKey(sourcePath);
+      const targetKey = this.resolveTargetKey(
+        sourceKey,
+        this.extractProjectKey(targetPath)
+      );
+      if (sourceKey) {
+        this.$store.dispatch('gitComparison/setSourceProjectKey', sourceKey);
+      }
+      if (targetKey) {
+        this.$store.dispatch('gitComparison/setTargetProjectKey', targetKey);
+      }
+      const query = {};
+      if (sourceKey) {
+        query.source = sourceKey;
+      }
+      if (targetKey) {
+        query.target = targetKey;
+      }
+      const route = { name: 'GitComparison' };
+      if (Object.keys(query).length) {
+        route.query = query;
+      }
+      this.$router.push(route);
+    },
+    extractProjectKey(path) {
+      if (!path || typeof path !== 'string') {
+        return '';
+      }
+      const segments = path
+        .split(/[/\\]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (!segments.length) {
+        return '';
+      }
+      return segments[segments.length - 1];
+    },
+    resolveTargetKey(sourceKey, candidate) {
+      const normalizedSource = (sourceKey || '').trim().toLowerCase();
+      const normalizedCandidate = (candidate || '').trim().toLowerCase();
+      if (normalizedCandidate && normalizedCandidate !== normalizedSource) {
+        return candidate;
+      }
+      const existing = this.$store?.state?.gitComparison?.targetProjectKey;
+      if (existing && existing.trim().toLowerCase() !== normalizedSource) {
+        return existing;
+      }
+      return '';
     },
   },
 };

@@ -3,6 +3,8 @@ package com.example.codecompare.rebuild.diff;
 import com.example.codecompare.rebuild.block.model.BlockDiff;
 import com.example.codecompare.rebuild.diff.model.DiffSegmentType;
 import com.example.codecompare.rebuild.diff.model.DiffSummary;
+import com.example.codecompare.rebuild.diff.support.DiffSimilarityCalculator;
+import com.example.codecompare.rebuild.diff.support.DiffSummaryCalculator;
 import com.github.difflib.patch.AbstractDelta;
 import com.github.difflib.patch.DeltaType;
 import com.github.difflib.patch.Patch;
@@ -10,11 +12,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.regex.Pattern;
 
 /**
  * 将 {@link Patch} 结果转换为对外的差异模型。
@@ -29,30 +27,20 @@ public class DiffResultAssembler {
         List<BlockDiff> segments = new ArrayList<>();
 
         for (AbstractDelta<String> delta : patch.getDeltas()) {
-            DiffSegmentType type = mapType(delta.getType());
-            int sourceStart = delta.getSource().getPosition() + 1;
-            int targetStart = delta.getTarget().getPosition() + 1;
-            List<String> deltaSourceLines = new ArrayList<>(delta.getSource().getLines());
-            List<String> deltaTargetLines = new ArrayList<>(delta.getTarget().getLines());
-            int changed = Math.max(deltaSourceLines.size(), deltaTargetLines.size());
-            int replacements = computeReplacements(deltaSourceLines, deltaTargetLines);
-            double similarity = computeSimilarity(deltaSourceLines, deltaTargetLines);
-
-            BlockDiff segment = BlockDiff.builder()
-                    .type(type)
-                    .sourceStartLine(sourceStart)
-                    .targetStartLine(targetStart)
-                    .changedLineCount(changed)
-                    .replacements(replacements)
-                    .similarityScore(similarity)
-                    .sourceLines(deltaSourceLines)
-                    .targetLines(deltaTargetLines)
-                    .build();
-            segments.add(segment);
+            if (delta.getType() == DeltaType.CHANGE) {
+                segments.addAll(splitChangeDelta(delta));
+            } else {
+                segments.add(createSegment(
+                        mapType(delta.getType()),
+                        delta.getSource().getPosition() + 1,
+                        delta.getTarget().getPosition() + 1,
+                        delta.getSource().getLines(),
+                        delta.getTarget().getLines()));
+            }
         }
 
         List<BlockDiff> mergedSegments = mergeAdjacentSegments(segments);
-        DiffSummary summary = buildSummary(mergedSegments);
+        DiffSummary summary = DiffSummaryCalculator.fromSegments(mergedSegments);
         return new DiffResult(mergedSegments, summary);
     }
 
@@ -68,115 +56,6 @@ public class DiffResultAssembler {
             default:
                 return DiffSegmentType.CHANGE;
         }
-    }
-
-    private int computeReplacements(List<String> sourceLines, List<String> targetLines) {
-        int min = Math.min(sourceLines.size(), targetLines.size());
-        int replacements = 0;
-        for (int i = 0; i < min; i++) {
-            String src = sourceLines.get(i);
-            String tgt = targetLines.get(i);
-            if (!equalsIgnoreLineEnding(src, tgt)) {
-                replacements++;
-            }
-        }
-        return replacements;
-    }
-
-    private static final double LINE_SIMILARITY_WEIGHT = 0.6d;
-    private static final double TOKEN_SIMILARITY_WEIGHT = 0.4d;
-    private static final Pattern TOKEN_SPLITTER = Pattern.compile("[^\\p{L}\\p{N}_]+");
-
-    private double computeSimilarity(List<String> sourceLines, List<String> targetLines) {
-        double lineSimilarity = computeLineSimilarity(sourceLines, targetLines);
-        double tokenSimilarity = computeTokenSimilarity(sourceLines, targetLines);
-        double combined = (lineSimilarity * LINE_SIMILARITY_WEIGHT) + (tokenSimilarity * TOKEN_SIMILARITY_WEIGHT);
-        return combined * 100d;
-    }
-
-    private double computeLineSimilarity(List<String> sourceLines, List<String> targetLines) {
-        int max = Math.max(sourceLines.size(), targetLines.size());
-        if (max == 0) {
-            return 1d;
-        }
-        int equal = 0;
-        int min = Math.min(sourceLines.size(), targetLines.size());
-        for (int i = 0; i < min; i++) {
-            if (equalsIgnoreLineEnding(sourceLines.get(i), targetLines.get(i))) {
-                equal++;
-            }
-        }
-        return (double) equal / (double) max;
-    }
-
-    private double computeTokenSimilarity(List<String> sourceLines, List<String> targetLines) {
-        TokenStats source = tokenize(sourceLines);
-        TokenStats target = tokenize(targetLines);
-        if (source.totalTokens == 0 && target.totalTokens == 0) {
-            return 1d;
-        }
-        if (source.totalTokens == 0 || target.totalTokens == 0) {
-            return 0d;
-        }
-        int intersection = 0;
-        for (Map.Entry<String, Integer> entry : source.frequencies.entrySet()) {
-            int overlap = Math.min(entry.getValue(), target.frequencies.getOrDefault(entry.getKey(), 0));
-            if (overlap > 0) {
-                intersection += overlap;
-            }
-        }
-        return (2d * intersection) / (double) (source.totalTokens + target.totalTokens);
-    }
-
-    private TokenStats tokenize(List<String> lines) {
-        if (lines == null || lines.isEmpty()) {
-            return TokenStats.EMPTY;
-        }
-        Map<String, Integer> frequencies = new HashMap<>();
-        int total = 0;
-        for (String line : lines) {
-            if (line == null) {
-                continue;
-            }
-            String[] parts = TOKEN_SPLITTER.split(line);
-            for (String part : parts) {
-                String token = normalizeToken(part);
-                if (token.isEmpty()) {
-                    continue;
-                }
-                frequencies.merge(token, 1, Integer::sum);
-                total++;
-            }
-        }
-        if (total == 0) {
-            return TokenStats.EMPTY;
-        }
-        return new TokenStats(frequencies, total);
-    }
-
-    private String normalizeToken(String raw) {
-        if (raw == null) {
-            return "";
-        }
-        String trimmed = raw.trim();
-        if (trimmed.isEmpty()) {
-            return "";
-        }
-        return trimmed.toLowerCase(Locale.ROOT);
-    }
-
-    private boolean equalsIgnoreLineEnding(String left, String right) {
-        if (left == null && right == null) {
-            return true;
-        }
-        if (left == null || right == null) {
-            return false;
-        }
-        return normalize(left).equals(normalize(right));
-    }
-
-    private String normalize(String value) {
-        return value == null ? "" : value.replace("\r\n", "\n");
     }
 
     private List<BlockDiff> mergeAdjacentSegments(List<BlockDiff> segments) {
@@ -293,50 +172,67 @@ public class DiffResultAssembler {
         return weighted / denominator;
     }
 
-    private DiffSummary buildSummary(List<BlockDiff> segments) {
-        DiffSummary.Builder builder = DiffSummary.builder();
-        int insertCount = 0;
-        int deleteCount = 0;
-        int changeCount = 0;
-        int totalChangedLines = 0;
-        int maxContinuous = 0;
-        if (segments != null) {
-            for (BlockDiff segment : segments) {
-                if (segment == null) {
-                    continue;
-                }
-                int changed = segment.getChangedLineCount();
-                totalChangedLines = safeAdd(totalChangedLines, changed);
-                maxContinuous = Math.max(maxContinuous, changed);
-                switch (segment.getType()) {
-                    case INSERT:
-                        insertCount++;
-                        break;
-                    case DELETE:
-                        deleteCount++;
-                        break;
-                    default:
-                        changeCount++;
-                        break;
-                }
-            }
+    private List<BlockDiff> splitChangeDelta(AbstractDelta<String> delta) {
+        List<BlockDiff> segments = new ArrayList<>();
+        List<String> sourceLines = new ArrayList<>(delta.getSource().getLines());
+        List<String> targetLines = new ArrayList<>(delta.getTarget().getLines());
+        int sourceStart = delta.getSource().getPosition() + 1;
+        int targetStart = delta.getTarget().getPosition() + 1;
+        int overlap = Math.min(sourceLines.size(), targetLines.size());
+
+        if (overlap > 0) {
+            segments.add(createSegment(
+                    DiffSegmentType.CHANGE,
+                    sourceStart,
+                    targetStart,
+                    sourceLines.subList(0, overlap),
+                    targetLines.subList(0, overlap)));
         }
-        return builder
-                .insertSegments(insertCount)
-                .deleteSegments(deleteCount)
-                .changeSegments(changeCount)
-                .totalChangedLines(totalChangedLines)
-                .maxContinuousChangedLines(maxContinuous)
+
+        if (targetLines.size() > overlap) {
+            segments.add(createSegment(
+                    DiffSegmentType.INSERT,
+                    sourceStart + overlap,
+                    targetStart + overlap,
+                    Collections.emptyList(),
+                    targetLines.subList(overlap, targetLines.size())));
+        } else if (sourceLines.size() > overlap) {
+            segments.add(createSegment(
+                    DiffSegmentType.DELETE,
+                    sourceStart + overlap,
+                    targetStart + overlap,
+                    sourceLines.subList(overlap, sourceLines.size()),
+                    Collections.emptyList()));
+        }
+
+        return segments;
+    }
+
+    private BlockDiff createSegment(DiffSegmentType type,
+                                    int sourceStart,
+                                    int targetStart,
+                                    List<String> sourceLines,
+                                    List<String> targetLines) {
+        List<String> normalizedSource = sourceLines == null
+                ? Collections.emptyList()
+                : new ArrayList<>(sourceLines);
+        List<String> normalizedTarget = targetLines == null
+                ? Collections.emptyList()
+                : new ArrayList<>(targetLines);
+        int changed = Math.max(normalizedSource.size(), normalizedTarget.size());
+        int replacements = DiffSimilarityCalculator.computeReplacements(normalizedSource, normalizedTarget);
+        double similarity = DiffSimilarityCalculator.computeSimilarity(normalizedSource, normalizedTarget);
+
+        return BlockDiff.builder()
+                .type(type)
+                .sourceStartLine(sourceStart)
+                .targetStartLine(targetStart)
+                .changedLineCount(changed)
+                .replacements(replacements)
+                .similarityScore(similarity)
+                .sourceLines(normalizedSource)
+                .targetLines(normalizedTarget)
                 .build();
     }
-    private static final class TokenStats {
-        private static final TokenStats EMPTY = new TokenStats(Collections.emptyMap(), 0);
-        private final Map<String, Integer> frequencies;
-        private final int totalTokens;
 
-        private TokenStats(Map<String, Integer> frequencies, int totalTokens) {
-            this.frequencies = frequencies;
-            this.totalTokens = totalTokens;
-        }
-    }
 }

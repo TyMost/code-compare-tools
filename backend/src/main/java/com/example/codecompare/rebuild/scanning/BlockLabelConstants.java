@@ -8,15 +8,15 @@ public final class BlockLabelConstants {
     private BlockLabelConstants() {
     }
 
-    /** Status used when a block仍需人工确认。 */
-    public static final String STATUS_REVIEW = "review";
-    /** Status used when源侧存在而目标缺失。 */
-    public static final String STATUS_UNMIGRATED = "unmigrated";
-    /** Status used when源目标已完成迁移。 */
-    public static final String STATUS_MIGRATED = "migrated";
-    /** Status used when目标新增了代码。 */
-    public static final String STATUS_NEW_CODE = "adapt_migration";
-    /** Status used when无其他规则命中。 */
-    public static final String STATUS_OTHER = "other";
-}
+    /** Status used when no rule hit is available. */
+    public static final String STATUS_NO_RULES = "no_rules";
 
+    /** Normalized status key for migrated segments (100% similarity). */
+    public static final String STATUS_MIGRATED = "migrated";
+
+    /** Display label for migrated segments. */
+    public static final String LABEL_MIGRATED = "\u5df2\u8fc1\u79fb";
+
+    /** Default color used for migrated labels (aligned with similarity-high rule). */
+    public static final String COLOR_MIGRATED = "#67C23A";
+}
