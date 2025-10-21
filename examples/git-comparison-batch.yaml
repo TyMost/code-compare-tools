@@ -1,7 +1,12 @@
-﻿# Batch export example configuration.
+# Batch export example configuration.
 # Each pair provides an explicit source → target comparison. Paths point to the working copies containing scan data.
+#
+# These sample pairs only rely on the repositories that ship with the project so you can
+# immediately validate the Excel export produces multiple source→target rows.
 
 pairs:
+  # Pair 1: projectA-git feature branch vs. projectB-git release branch.
+  # This is identical to the baseline used by the README and guarantees non-empty results.
   - source:
       code: projectA-git
       path: D:\Coding\code-compare-tools\examples\projectA-git
@@ -11,32 +16,36 @@ pairs:
     git-base-ref-source: refs/heads/main
     git-target-ref-source: refs/heads/feature/git-demo
     git-base-ref-target: refs/heads/main
-    git-target-ref-target: refs/heads/release/git-demo
+    git-target-ref-target: refs/heads/20251019v1.1Git
 
+  # Pair 2: reverse direction so that the export lists more than one repository combination.
+  # We purposely compare the release branch of projectB-git back to the feature branch of projectA-git.
   - source:
-      code: projectC-git
-      path: D:\Coding\code-compare-tools\examples\projectC-git
+      code: projectB-git
+      path: D:\Coding\code-compare-tools\examples\projectB-git
     target:
-      code: projectD-git
-      path: D:\Coding\code-compare-tools\examples\projectD-git
+      code: projectA-git
+      path: D:\Coding\code-compare-tools\examples\projectA-git
     git-base-ref-source: refs/heads/main
-    git-target-ref-source: refs/heads/feature/refactor-c
+    git-target-ref-source: refs/heads/20251018v1.0
     git-base-ref-target: refs/heads/main
-    git-target-ref-target: refs/heads/release/refactor-d
+    git-target-ref-target: refs/heads/feature/git-demo
 
-  - source:
-      code: projectE-git
-      path: D:\Coding\code-compare-tools\examples\projectE-git
-    target:
-      code: projectF-git
-      path: D:\Coding\code-compare-tools\examples\projectF-git
-    git-base-ref-source: refs/heads/dev
-    git-target-ref-source: refs/heads/feature/new-module
-    git-base-ref-target: refs/heads/dev
-    git-target-ref-target: refs/heads/release/new-module
+  # Pair 3 (optional): compare projectA-git against its own working tree to include local, uncommitted changes.
+  # Uncomment this block only when you want to surface pending edits during a batch export.
+  # - source:
+  #     code: projectA-git
+  #     path: D:\Coding\code-compare-tools\examples\projectA-git
+  #   target:
+  #     code: projectB-git
+  #     path: D:\Coding\code-compare-tools\examples\projectB-git
+  #   git-base-ref-source: refs/heads/main
+  #   git-target-ref-source: WORKING_TREE
+  #   git-base-ref-target: refs/heads/main
+  #   git-target-ref-target: refs/heads/20251019v1.1Git
 
-# Optional global overrides (used when a pair omits refs)
+# Global fallbacks (only used when a pair omits explicit refs).
 git-base-ref-source: refs/heads/main
-git-target-ref-source: refs/heads/feature/default
+git-target-ref-source: refs/heads/feature/git-demo
 git-base-ref-target: refs/heads/main
-git-target-ref-target: refs/heads/release/default
+git-target-ref-target: refs/heads/20251019v1.1Git

@@ -32,8 +32,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -225,7 +227,7 @@ public class JGitChangeScanner implements GitChangeScanner {
                             referencePair.useWorkingTree);
                     records.add(record);
                     totalBytes += Math.max(record.getSizeInBytes(), 0);
-                    GitDiffFile diffFile = toGitDiffFile(formatter, entry, record, warnings);
+                    GitDiffFile diffFile = toGitDiffFile(formatter, repository, entry, record, warnings);
                     if (diffFile != null) {
                         diffFiles.add(diffFile);
                     }
@@ -291,6 +293,7 @@ public class JGitChangeScanner implements GitChangeScanner {
 
 
     private GitDiffFile toGitDiffFile(DiffFormatter formatter,
+                                      Repository repository,
                                       DiffEntry entry,
                                       FileRecord record,
                                       List<String> warnings) throws IOException {
@@ -330,8 +333,8 @@ public class JGitChangeScanner implements GitChangeScanner {
         long accumulated = 0L;
         boolean truncated = false;
         List<GitDiffHunk> payload = new ArrayList<>();
+        int hunkIndex = 0;
         for (HunkHeader hunk : hunks) {
-            long hunkBytes = estimateHunkBytes(fileHeader, hunk);
             HunkHeader.OldImage oldImage = hunk.getOldImage();
             int oldStart = oldImage != null ? Math.max(oldImage.getStartLine(), 0) : 0;
             int oldCount = oldImage != null ? Math.max(oldImage.getLineCount(), 0) : 0;
@@ -347,17 +350,25 @@ public class JGitChangeScanner implements GitChangeScanner {
                         newStart,
                         newCount);
             }
-            if (maxDiffBytes > 0 && accumulated + hunkBytes > maxDiffBytes) {
-                truncated = true;
-                break;
-            }
-            List<String> lines = extractDiffLines(fileHeader, hunk);
+            List<String> lines = extractDiffLines(repository, entry, fileHeader, hunk, hunkIndex);
             if (log.isDebugEnabled()) {
                 log.debug("Decoded hunk lines: path={} startOffset={} endOffset={} lineCount={}",
                         record.getPath(),
                         hunk.getStartOffset(),
                         hunk.getEndOffset(),
                         lines.size());
+            }
+            if (lines.isEmpty()) {
+                hunkIndex++;
+                continue;
+            }
+            long hunkBytes = estimateHunkBytes(fileHeader, hunk);
+            if (hunkBytes <= 0) {
+                hunkBytes = estimateFallbackBytes(lines);
+            }
+            if (maxDiffBytes > 0 && accumulated + hunkBytes > maxDiffBytes) {
+                truncated = true;
+                break;
             }
             GitDiffHunk gitDiffHunk = GitDiffHunk.builder()
                     .oldRange(GitDiffHunk.Range.of(oldStart, oldCount))
@@ -367,6 +378,7 @@ public class JGitChangeScanner implements GitChangeScanner {
                     .build();
             payload.add(gitDiffHunk);
             accumulated += hunkBytes;
+            hunkIndex++;
         }
         if (payload.isEmpty()) {
             log.debug("Git diff hunk payload empty, path={}", record.getPath());
@@ -405,25 +417,32 @@ public class JGitChangeScanner implements GitChangeScanner {
         return end - start;
     }
 
-    private List<String> extractDiffLines(FileHeader fileHeader, HunkHeader hunk) {
+    private List<String> extractDiffLines(Repository repository,
+                                          DiffEntry entry,
+                                          FileHeader fileHeader,
+                                          HunkHeader hunk,
+                                          int hunkIndex) throws IOException {
         String slice = decodeDiffSlice(fileHeader, hunk.getStartOffset(), hunk.getEndOffset());
-        if (!StringUtils.hasText(slice)) {
-            return Collections.emptyList();
+        if (StringUtils.hasText(slice)) {
+            return normalizeDiffLines(slice);
         }
-        String[] rawLines = slice.split("\n");
-        List<String> lines = new ArrayList<>();
-        for (int i = 0; i < rawLines.length; i++) {
-            String line = trimLineEnding(rawLines[i]);
-            if (i == 0 && line.startsWith("@@")) {
-                // header line already described by range metadata
-                continue;
+        String path = fileHeader.getNewPath();
+        List<String> bufferFallback = extractDiffLinesFromPatchBuffer(fileHeader, hunkIndex, path);
+        if (!bufferFallback.isEmpty()) {
+            if (log.isDebugEnabled()) {
+                log.debug("Fallback diff slice decode succeeded: path={} hunkIndex={} bufferLength={}",
+                        path, hunkIndex,
+                        fileHeader.getBuffer() == null ? -1 : fileHeader.getBuffer().length);
             }
-            if (line.isEmpty() && i == rawLines.length - 1) {
-                continue;
-            }
-            lines.add(line);
+            return bufferFallback;
         }
-        return lines;
+        List<String> formatterFallback = extractDiffLinesWithFormatter(repository, entry, hunkIndex,
+                scanProperties.isGitIncludeRenames() || scanProperties.isGitDetectCopies(), path);
+        if (!formatterFallback.isEmpty() && log.isDebugEnabled()) {
+            log.debug("Formatter-based diff slice decode succeeded: path={} hunkIndex={}",
+                    path, hunkIndex);
+        }
+        return formatterFallback;
     }
 
     private String decodeDiffSlice(FileHeader fileHeader, int startOffset, int endOffset) {
@@ -436,6 +455,102 @@ public class JGitChangeScanner implements GitChangeScanner {
             return "";
         }
         return RawParseUtils.decode(buffer, startOffset, endOffset);
+    }
+
+    private List<String> extractDiffLinesFromPatchBuffer(FileHeader fileHeader, int hunkIndex, String path) {
+        byte[] buffer = fileHeader.getBuffer();
+        if (buffer == null || buffer.length == 0) {
+            return Collections.emptyList();
+        }
+        String decoded = RawParseUtils.decode(buffer, 0, buffer.length);
+        return extractDiffLinesFromPatchString(decoded, hunkIndex, path);
+    }
+
+    private List<String> extractDiffLinesWithFormatter(Repository repository,
+                                                       DiffEntry entry,
+                                                       int hunkIndex,
+                                                       boolean detectRenames,
+                                                       String path) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try (DiffFormatter capture = new DiffFormatter(output)) {
+            capture.setRepository(repository);
+            capture.setDetectRenames(detectRenames);
+            capture.format(entry);
+        }
+        String patch = output.toString(StandardCharsets.UTF_8.name());
+        return extractDiffLinesFromPatchString(patch, hunkIndex, path);
+    }
+
+    private List<String> extractDiffLinesFromPatchString(String patch, int hunkIndex, String path) {
+        if (!StringUtils.hasText(patch)) {
+            return Collections.emptyList();
+        }
+        if (log.isDebugEnabled() && patch.contains("@@")) {
+            log.debug("Raw diff patch for path={} hunkIndex={}\n{}", path, hunkIndex, patch);
+        }
+        String[] rawLines = patch.split("\n");
+        List<String> lines = new ArrayList<>();
+        int currentHunk = -1;
+        for (int i = 0; i < rawLines.length; i++) {
+            String line = trimLineEnding(rawLines[i]);
+            if (line.startsWith("@@")) {
+                currentHunk++;
+                if (currentHunk > hunkIndex) {
+                    break;
+                }
+                continue;
+            }
+            if (currentHunk == hunkIndex) {
+                if (line.isEmpty() && i == rawLines.length - 1) {
+                    continue;
+                }
+                if (line.startsWith("diff --git")
+                        || line.startsWith("index ")
+                        || line.startsWith("--- ")
+                        || line.startsWith("+++ ")) {
+                    continue;
+                }
+                lines.add(line);
+            }
+        }
+        for (int i = lines.size() - 1; i >= 0; i--) {
+            if (lines.get(i).isEmpty()) {
+                lines.remove(i);
+            } else {
+                break;
+            }
+        }
+        return lines;
+    }
+
+    private List<String> normalizeDiffLines(String rawSlice) {
+        String[] rawLines = rawSlice.split("\n");
+        List<String> lines = new ArrayList<>();
+        for (int i = 0; i < rawLines.length; i++) {
+            String line = trimLineEnding(rawLines[i]);
+            if (i == 0 && line.startsWith("@@")) {
+                continue;
+            }
+            if (line.isEmpty() && i == rawLines.length - 1) {
+                continue;
+            }
+            lines.add(line);
+        }
+        return lines;
+    }
+
+    private long estimateFallbackBytes(List<String> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return 0L;
+        }
+        long total = 0L;
+        for (String line : lines) {
+            if (line == null) {
+                continue;
+            }
+            total += line.getBytes(StandardCharsets.UTF_8).length + 1;
+        }
+        return total;
     }
 
     private String formatCommitId(ObjectId id) {
