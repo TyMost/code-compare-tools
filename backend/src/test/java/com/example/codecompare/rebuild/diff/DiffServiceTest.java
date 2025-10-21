@@ -1,11 +1,16 @@
-package com.example.codecompare.rebuild.diff;
+﻿package com.example.codecompare.rebuild.diff;
 
 import com.example.codecompare.rebuild.block.model.BlockDiff;
 import com.example.codecompare.rebuild.block.model.CodeSnapshot;
 import com.example.codecompare.rebuild.diff.config.DiffConfigurationProperties;
+import com.example.codecompare.rebuild.diff.git.GitDiffEngine;
 import com.example.codecompare.rebuild.diff.model.DiffSegmentType;
+import com.example.codecompare.rebuild.repository.model.FileChangeType;
+import com.example.codecompare.rebuild.scanning.git.GitDiffFile;
+import com.example.codecompare.rebuild.scanning.git.GitDiffHunk;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -13,9 +18,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DiffServiceTest {
 
     private DiffService createService() {
+        return createService("default");
+    }
+
+    private DiffService createService(String engineType) {
         DiffConfigurationProperties properties = new DiffConfigurationProperties();
         properties.setMaxFileSize(1024 * 1024);
-        return new DiffService(new LineDiffEngine(), new DiffResultAssembler(), DiffContentMasker.noop(), properties);
+        properties.setEngineType(engineType);
+        return new DiffService(new LineDiffEngine(), new DiffResultAssembler(), DiffContentMasker.noop(), properties, new GitDiffEngine());
     }
 
     @Test
@@ -72,7 +82,8 @@ class DiffServiceTest {
         DiffContentMasker masker = (value, scope) -> value == null
                 ? ""
                 : value.replaceAll("(?m)^import.+$", "");
-        DiffService service = new DiffService(new LineDiffEngine(), new DiffResultAssembler(), masker, properties);
+        DiffService service = new DiffService(new LineDiffEngine(), new DiffResultAssembler(), masker,
+                properties, new GitDiffEngine());
 
         String source = "import java.util.List;\nclass Demo {}\n";
         String target = "class Demo {}\n";
@@ -83,5 +94,37 @@ class DiffServiceTest {
                 .build());
 
         assertThat(result.getSegments()).isEmpty();
+    }
+
+    @Test
+    void analyzePrefersGitDiffWhenHunksProvided() {
+        DiffService service = createService("git");
+        String sourceContent = "System.out.println(\"old\");\n";
+        String targetContent = "System.out.println(\"new\");\n";
+
+        GitDiffHunk hunk = GitDiffHunk.builder()
+                .oldRange(GitDiffHunk.Range.of(1, 1))
+                .newRange(GitDiffHunk.Range.of(1, 1))
+                .lines(Arrays.asList("-System.out.println(\"old\");", "+System.out.println(\"new\");"))
+                .byteSize(64)
+                .build();
+        GitDiffFile gitDiffFile = GitDiffFile.builder()
+                .path("Demo.java")
+                .changeType(FileChangeType.MODIFIED)
+                .addHunk(hunk)
+                .totalBytes(64)
+                .build();
+
+        DiffResult result = service.analyze(DiffRequest.builder()
+                .source(CodeSnapshot.of("java", "Demo.java", sourceContent))
+                .target(CodeSnapshot.of("java", "Demo.java", targetContent))
+                .build(), gitDiffFile);
+
+        assertThat(result.getSegments()).hasSize(1);
+        BlockDiff segment = result.getSegments().get(0);
+        assertThat(segment.getType()).isEqualTo(DiffSegmentType.CHANGE);
+        assertThat(segment.getSourceLines()).containsExactly("System.out.println(\"old\");");
+        assertThat(segment.getTargetLines()).containsExactly("System.out.println(\"new\");");
+        assertThat(segment.getSimilarityScore()).isLessThan(50d);
     }
 }

@@ -2,6 +2,7 @@ package com.example.codecompare.rebuild.stats;
 
 import com.example.codecompare.rebuild.core.support.ProjectRootRegistry;
 import com.example.codecompare.rebuild.core.support.ProjectRootRegistry.ProjectRootDescriptor;
+import com.example.codecompare.rebuild.scanning.BlockLabelConstants;
 import com.example.codecompare.rebuild.repository.BlockDecisionRepository;
 import com.example.codecompare.rebuild.repository.DiffSnapshotRepository;
 import com.example.codecompare.rebuild.repository.model.BlockDecisionRecord;
@@ -9,7 +10,6 @@ import com.example.codecompare.rebuild.repository.model.BlockDecisionSnapshot;
 import com.example.codecompare.rebuild.repository.model.DiffSnapshotDocument;
 import com.example.codecompare.rebuild.repository.model.PageRequest;
 import com.example.codecompare.rebuild.repository.model.PageResult;
-import com.example.codecompare.rebuild.scanning.BlockLabelConstants;
 import com.example.codecompare.rebuild.scanning.ScanCompletedEvent;
 import com.example.codecompare.rebuild.scanning.ScanResultRepository;
 import com.example.codecompare.rebuild.scanning.ScanSummary;
@@ -113,8 +113,8 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
                 if (documentTotalLines > 0) {
                     if (documentTotalLines > documentLineSum) {
                         int migratedLines = documentTotalLines - (int) documentLineSum;
-                        mergeCounts(labelCounts, Collections.singletonMap(BlockLabelConstants.STATUS_MIGRATED, 1));
-                        mergeCounts(lineCounts, Collections.singletonMap(BlockLabelConstants.STATUS_MIGRATED, migratedLines));
+                        mergeCounts(labelCounts, Collections.singletonMap(BlockLabelConstants.STATUS_NO_RULES, 1));
+                        mergeCounts(lineCounts, Collections.singletonMap(BlockLabelConstants.STATUS_NO_RULES, migratedLines));
                         documentLineSum += migratedLines;
                     }
                     totalLinesFromSnapshots += documentTotalLines;
@@ -131,11 +131,7 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
         long totalLines = totalLinesFromSnapshots > 0
                 ? totalLinesFromSnapshots
                 : lineCounts.values().stream().mapToLong(Long::longValue).sum();
-        long newLines = lineCounts.entrySet().stream()
-                .filter(entry -> isNewCodeKey(entry.getKey()))
-                .mapToLong(Map.Entry::getValue)
-                .sum();
-        double newCodeRatio = totalLines == 0 ? 0d : (double) newLines / totalLines;
+        double newCodeRatio = 0d;
 
         Set<String> categoryKeys = new LinkedHashSet<>();
         categoryKeys.addAll(labelCounts.keySet());
@@ -208,13 +204,7 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
                 .filter(Objects::nonNull)
                 .mapToLong(Integer::longValue)
                 .sum();
-        long newLines = filtered.stream()
-                .filter(item -> item.getStatus() != null && item.getStatus().toLowerCase(Locale.ROOT).contains("new"))
-                .map(BlockItem::getLineCount)
-                .filter(Objects::nonNull)
-                .mapToLong(Integer::longValue)
-                .sum();
-        double ratio = totalLines == 0 ? 0d : (double) newLines / totalLines;
+        double ratio = 0d;
 
         Set<String> categoryKeys = filtered.stream()
                 .flatMap(item -> item.getCategories().stream())
@@ -310,9 +300,15 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
     }
 
     private BlockItem toBlockItem(BlockDecisionSnapshot snapshot, BlockDecisionRecord record) {
-        List<String> categories = record.getDiff() == null
-                ? Collections.emptyList()
-                : record.getDiff().getLabels();
+        List<String> categories = Collections.emptyList();
+        if (record.getDiff() != null) {
+            List<String> labelIds = record.getDiff().getLabelIds();
+            if (!CollectionUtils.isEmpty(labelIds)) {
+                categories = new ArrayList<>(labelIds);
+            } else if (!CollectionUtils.isEmpty(record.getDiff().getLabels())) {
+                categories = new ArrayList<>(record.getDiff().getLabels());
+            }
+        }
         String targetCode = record.getDiff() == null ? "" : record.getDiff().getTargetContent();
         String sourceCode = record.getDiff() == null ? "" : record.getDiff().getSourceContent();
         String snippet = StringUtils.hasText(targetCode) ? targetCode : sourceCode;
@@ -343,7 +339,7 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
                 snippet,
                 sourceCode,
                 targetCode,
-                new ArrayList<>(categories),
+                categories,
                 status,
                 statusLabel,
                 statusColor,
@@ -370,18 +366,6 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
             return;
         }
         source.forEach((key, value) -> target.merge(key, value == null ? 0L : value.longValue(), Long::sum));
-    }
-
-    private boolean isNewCodeKey(String key) {
-        if (!StringUtils.hasText(key)) {
-            return false;
-        }
-        String normalized = key.trim();
-        if (BlockLabelConstants.STATUS_NEW_CODE.equalsIgnoreCase(normalized)) {
-            return true;
-        }
-        String lowered = normalized.toLowerCase(Locale.ROOT);
-        return lowered.contains("new") || lowered.contains("add");
     }
 
     private String defaultComparisonId() {

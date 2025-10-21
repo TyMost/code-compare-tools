@@ -4,7 +4,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -20,6 +22,10 @@ public final class ScanSummary {
     private final Instant completedAt;
     private final Duration duration;
     private final List<String> warnings;
+    private final Map<String, String> baseCommits;
+    private final Map<String, String> latestCommits;
+    private final String diffEngine;
+    private final DiffConfiguration diffConfiguration;
 
     private ScanSummary(Builder builder) {
         this.projectCode = Objects.requireNonNull(builder.projectCode, "projectCode must not be null");
@@ -32,6 +38,14 @@ public final class ScanSummary {
                 ? Duration.between(builder.startedAt, builder.completedAt)
                 : builder.duration;
         this.warnings = Collections.unmodifiableList(new ArrayList<>(builder.warnings));
+        this.baseCommits = Collections.unmodifiableMap(new LinkedHashMap<>(builder.baseCommits));
+        this.latestCommits = Collections.unmodifiableMap(new LinkedHashMap<>(builder.latestCommits));
+        this.diffEngine = builder.diffEngine == null || builder.diffEngine.trim().isEmpty()
+                ? "default"
+                : builder.diffEngine.trim();
+        this.diffConfiguration = builder.diffConfiguration == null
+                ? DiffConfiguration.empty()
+                : builder.diffConfiguration;
     }
 
     public String getProjectCode() {
@@ -66,6 +80,22 @@ public final class ScanSummary {
         return warnings;
     }
 
+    public Map<String, String> getBaseCommits() {
+        return baseCommits;
+    }
+
+    public Map<String, String> getLatestCommits() {
+        return latestCommits;
+    }
+
+    public String getDiffEngine() {
+        return diffEngine;
+    }
+
+    public DiffConfiguration getDiffConfiguration() {
+        return diffConfiguration;
+    }
+
     public double getThroughputPerSecond() {
         if (duration == null || duration.isZero()) {
             return 0d;
@@ -86,7 +116,94 @@ public final class ScanSummary {
                 .projectCode(projectCode)
                 .startedAt(timestamp)
                 .completedAt(timestamp)
+                .baseCommits(Collections.emptyMap())
+                .latestCommits(Collections.emptyMap())
                 .build();
+    }
+
+    public static final class DiffConfiguration {
+
+        private final boolean gitIncludeRenames;
+        private final boolean gitDetectCopies;
+        private final long gitMaxDiffBytes;
+        private final long gitMaxFileSizeBytes;
+
+        private DiffConfiguration(Builder builder) {
+            this.gitIncludeRenames = builder.gitIncludeRenames;
+            this.gitDetectCopies = builder.gitDetectCopies;
+            this.gitMaxDiffBytes = builder.gitMaxDiffBytes;
+            this.gitMaxFileSizeBytes = builder.gitMaxFileSizeBytes;
+        }
+
+        public boolean isGitIncludeRenames() {
+            return gitIncludeRenames;
+        }
+
+        public boolean isGitDetectCopies() {
+            return gitDetectCopies;
+        }
+
+        public long getGitMaxDiffBytes() {
+            return gitMaxDiffBytes;
+        }
+
+        public long getGitMaxFileSizeBytes() {
+            return gitMaxFileSizeBytes;
+        }
+
+        public Builder toBuilder() {
+            return new Builder().from(this);
+        }
+
+        public static Builder builder() {
+            return new Builder();
+        }
+
+        public static DiffConfiguration empty() {
+            return builder().build();
+        }
+
+        public static final class Builder {
+            private boolean gitIncludeRenames;
+            private boolean gitDetectCopies;
+            private long gitMaxDiffBytes;
+            private long gitMaxFileSizeBytes;
+
+            private Builder() {
+            }
+
+            private Builder from(DiffConfiguration configuration) {
+                this.gitIncludeRenames = configuration.gitIncludeRenames;
+                this.gitDetectCopies = configuration.gitDetectCopies;
+                this.gitMaxDiffBytes = configuration.gitMaxDiffBytes;
+                this.gitMaxFileSizeBytes = configuration.gitMaxFileSizeBytes;
+                return this;
+            }
+
+            public Builder gitIncludeRenames(boolean gitIncludeRenames) {
+                this.gitIncludeRenames = gitIncludeRenames;
+                return this;
+            }
+
+            public Builder gitDetectCopies(boolean gitDetectCopies) {
+                this.gitDetectCopies = gitDetectCopies;
+                return this;
+            }
+
+            public Builder gitMaxDiffBytes(long gitMaxDiffBytes) {
+                this.gitMaxDiffBytes = Math.max(gitMaxDiffBytes, 0);
+                return this;
+            }
+
+            public Builder gitMaxFileSizeBytes(long gitMaxFileSizeBytes) {
+                this.gitMaxFileSizeBytes = Math.max(gitMaxFileSizeBytes, 0);
+                return this;
+            }
+
+            public DiffConfiguration build() {
+                return new DiffConfiguration(this);
+            }
+        }
     }
 
     public static final class Builder {
@@ -99,6 +216,10 @@ public final class ScanSummary {
         private Instant completedAt;
         private Duration duration;
         private final List<String> warnings = new ArrayList<>();
+        private final Map<String, String> baseCommits = new LinkedHashMap<>();
+        private final Map<String, String> latestCommits = new LinkedHashMap<>();
+        private String diffEngine = "default";
+        private DiffConfiguration diffConfiguration = DiffConfiguration.empty();
 
         private Builder() {
         }
@@ -112,6 +233,12 @@ public final class ScanSummary {
             this.completedAt = summary.completedAt;
             this.duration = summary.duration;
             this.warnings.addAll(summary.warnings);
+            this.baseCommits.clear();
+            this.baseCommits.putAll(summary.baseCommits);
+            this.latestCommits.clear();
+            this.latestCommits.putAll(summary.latestCommits);
+            this.diffEngine = summary.diffEngine;
+            this.diffConfiguration = summary.diffConfiguration;
             return this;
         }
 
@@ -172,6 +299,46 @@ public final class ScanSummary {
             if (warnings != null) {
                 warnings.forEach(this::addWarning);
             }
+            return this;
+        }
+
+        public Builder putBaseCommit(String key, String value) {
+            if (key != null && value != null) {
+                this.baseCommits.put(key, value);
+            }
+            return this;
+        }
+
+        public Builder baseCommits(Map<String, String> values) {
+            this.baseCommits.clear();
+            if (values != null) {
+                values.forEach(this::putBaseCommit);
+            }
+            return this;
+        }
+
+        public Builder putLatestCommit(String key, String value) {
+            if (key != null && value != null) {
+                this.latestCommits.put(key, value);
+            }
+            return this;
+        }
+
+        public Builder latestCommits(Map<String, String> values) {
+            this.latestCommits.clear();
+            if (values != null) {
+                values.forEach(this::putLatestCommit);
+            }
+            return this;
+        }
+
+        public Builder diffEngine(String diffEngine) {
+            this.diffEngine = diffEngine == null || diffEngine.trim().isEmpty() ? "default" : diffEngine.trim();
+            return this;
+        }
+
+        public Builder diffConfiguration(DiffConfiguration diffConfiguration) {
+            this.diffConfiguration = diffConfiguration == null ? DiffConfiguration.empty() : diffConfiguration;
             return this;
         }
 

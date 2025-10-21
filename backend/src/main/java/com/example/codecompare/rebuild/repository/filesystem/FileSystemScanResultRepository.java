@@ -20,7 +20,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -40,7 +42,7 @@ public class FileSystemScanResultRepository implements ScanResultRepository {
                                           ObjectMapper objectMapper) {
         this.fileMetadataRepository = fileMetadataRepository;
         this.storageProperties = storageProperties;
-        this.objectMapper = objectMapper;
+        this.objectMapper = configureMapper(objectMapper);
     }
 
     @Override
@@ -106,11 +108,27 @@ public class FileSystemScanResultRepository implements ScanResultRepository {
         private Instant completedAt;
         private long durationMillis;
         private List<String> warnings = new ArrayList<>();
+        private Map<String, String> baseCommits = new LinkedHashMap<>();
+        private Map<String, String> latestCommits = new LinkedHashMap<>();
+        private String diffEngine;
+        private boolean gitIncludeRenames;
+        private boolean gitDetectCopies;
+        private long gitMaxDiffBytes;
+        private long gitMaxFileSizeBytes;
 
         private ScanSummary toSummary() {
             List<String> roots = scannedRoots == null ? Collections.emptyList() : new ArrayList<>(scannedRoots);
             List<String> resolvedWarnings = warnings == null ? Collections.emptyList() : new ArrayList<>(warnings);
             Duration duration = durationMillis <= 0 ? null : Duration.ofMillis(durationMillis);
+            Map<String, String> resolvedBase = baseCommits == null ? Collections.emptyMap() : new LinkedHashMap<>(baseCommits);
+            Map<String, String> resolvedLatest = latestCommits == null ? Collections.emptyMap() : new LinkedHashMap<>(latestCommits);
+            ScanSummary.DiffConfiguration diffConfiguration = ScanSummary.DiffConfiguration.builder()
+                    .gitIncludeRenames(gitIncludeRenames)
+                    .gitDetectCopies(gitDetectCopies)
+                    .gitMaxDiffBytes(gitMaxDiffBytes)
+                    .gitMaxFileSizeBytes(gitMaxFileSizeBytes)
+                    .build();
+
             return ScanSummary.builder()
                     .projectCode(projectCode)
                     .scannedRoots(roots)
@@ -120,6 +138,10 @@ public class FileSystemScanResultRepository implements ScanResultRepository {
                     .completedAt(completedAt)
                     .duration(duration)
                     .warnings(resolvedWarnings)
+                    .baseCommits(resolvedBase)
+                    .latestCommits(resolvedLatest)
+                    .diffEngine(diffEngine)
+                    .diffConfiguration(diffConfiguration)
                     .build();
         }
 
@@ -134,7 +156,20 @@ public class FileSystemScanResultRepository implements ScanResultRepository {
             Duration duration = summary.getDuration();
             stored.durationMillis = duration == null ? 0 : duration.toMillis();
             stored.warnings = new ArrayList<>(summary.getWarnings());
+            stored.baseCommits = new LinkedHashMap<>(summary.getBaseCommits());
+            stored.latestCommits = new LinkedHashMap<>(summary.getLatestCommits());
+            stored.diffEngine = summary.getDiffEngine();
+            ScanSummary.DiffConfiguration diffConfiguration = summary.getDiffConfiguration();
+            stored.gitIncludeRenames = diffConfiguration.isGitIncludeRenames();
+            stored.gitDetectCopies = diffConfiguration.isGitDetectCopies();
+            stored.gitMaxDiffBytes = diffConfiguration.getGitMaxDiffBytes();
+            stored.gitMaxFileSizeBytes = diffConfiguration.getGitMaxFileSizeBytes();
             return stored;
         }
+    }
+
+    private ObjectMapper configureMapper(ObjectMapper mapper) {
+        ObjectMapper configured = mapper == null ? new ObjectMapper() : mapper.copy();
+        return configured.findAndRegisterModules();
     }
 }

@@ -33,6 +33,8 @@ public final class DiffSnapshotDocument {
     private final Map<String, Integer> lineCounts;
     private final int totalLineCount;
     private final List<String> decisionIds;
+    private final List<Map<String, Object>> gitSnapshots;
+    private final Map<String, Object> gitDiff;
 
     private DiffSnapshotDocument(Builder builder) {
         this.id = builder.id == null ? UUID.randomUUID().toString() : builder.id;
@@ -54,6 +56,23 @@ public final class DiffSnapshotDocument {
         this.decisionIds = builder.decisionIds == null
                 ? Collections.emptyList()
                 : Collections.unmodifiableList(new ArrayList<>(builder.decisionIds));
+        if (builder.gitSnapshots == null || builder.gitSnapshots.isEmpty()) {
+            this.gitSnapshots = Collections.emptyList();
+        } else {
+            List<Map<String, Object>> copies = new ArrayList<>(builder.gitSnapshots.size());
+            for (Map<String, Object> snapshot : builder.gitSnapshots) {
+                Map<String, Object> copy = snapshot == null
+                        ? Collections.emptyMap()
+                        : Collections.unmodifiableMap(new LinkedHashMap<>(snapshot));
+                copies.add(copy);
+            }
+            this.gitSnapshots = Collections.unmodifiableList(copies);
+        }
+        if (builder.gitDiff == null || builder.gitDiff.isEmpty()) {
+            this.gitDiff = Collections.emptyMap();
+        } else {
+            this.gitDiff = Collections.unmodifiableMap(new LinkedHashMap<>(builder.gitDiff));
+        }
     }
 
     private <T> T require(T value, String name) {
@@ -120,6 +139,14 @@ public final class DiffSnapshotDocument {
         return decisionIds;
     }
 
+    public List<Map<String, Object>> getGitSnapshots() {
+        return gitSnapshots;
+    }
+
+    public Map<String, Object> getGitDiff() {
+        return gitDiff;
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     @JsonPOJOBuilder(withPrefix = "")
     public static final class Builder {
@@ -136,6 +163,8 @@ public final class DiffSnapshotDocument {
         private Map<String, Integer> lineCounts;
         private int totalLineCount;
         private List<String> decisionIds;
+        private List<Map<String, Object>> gitSnapshots;
+        private Map<String, Object> gitDiff;
 
         public Builder() {
         }
@@ -202,6 +231,16 @@ public final class DiffSnapshotDocument {
 
         public Builder decisionIds(@JsonProperty("decisionIds") List<String> decisionIds) {
             this.decisionIds = decisionIds;
+            return this;
+        }
+
+        public Builder gitSnapshots(@JsonProperty("gitSnapshots") List<Map<String, Object>> gitSnapshots) {
+            this.gitSnapshots = gitSnapshots;
+            return this;
+        }
+
+        public Builder gitDiff(@JsonProperty("gitDiff") Map<String, Object> gitDiff) {
+            this.gitDiff = gitDiff;
             return this;
         }
 

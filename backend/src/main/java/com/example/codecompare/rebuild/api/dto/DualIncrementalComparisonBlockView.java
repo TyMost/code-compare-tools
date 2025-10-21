@@ -18,6 +18,9 @@ public final class DualIncrementalComparisonBlockView {
     private final int referenceLineCount;
     private final boolean sourceOnly;
     private final boolean targetOnly;
+    private final String blockType;
+    private final String changeType;
+    private final String matchStatus;
 
     private DualIncrementalComparisonBlockView(Builder builder) {
         this.index = Math.max(0, builder.index);
@@ -27,6 +30,9 @@ public final class DualIncrementalComparisonBlockView {
         this.referenceLineCount = Math.max(0, builder.referenceLineCount);
         this.sourceOnly = builder.sourceOnly;
         this.targetOnly = builder.targetOnly;
+        this.blockType = builder.blockType;
+        this.changeType = builder.changeType;
+        this.matchStatus = builder.matchStatus;
     }
 
     public static Builder builder() {
@@ -61,6 +67,18 @@ public final class DualIncrementalComparisonBlockView {
         return targetOnly;
     }
 
+    public String getBlockType() {
+        return blockType;
+    }
+
+    public String getChangeType() {
+        return changeType;
+    }
+
+    public String getMatchStatus() {
+        return matchStatus;
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     @JsonPOJOBuilder(withPrefix = "")
     public static final class Builder {
@@ -71,6 +89,9 @@ public final class DualIncrementalComparisonBlockView {
         private int referenceLineCount;
         private boolean sourceOnly;
         private boolean targetOnly;
+        private String blockType;
+        private String changeType;
+        private String matchStatus;
 
         public Builder() {
         }
@@ -107,6 +128,21 @@ public final class DualIncrementalComparisonBlockView {
 
         public Builder targetOnly(@JsonProperty("targetOnly") boolean targetOnly) {
             this.targetOnly = targetOnly;
+            return this;
+        }
+
+        public Builder blockType(@JsonProperty("blockType") String blockType) {
+            this.blockType = blockType;
+            return this;
+        }
+
+        public Builder changeType(@JsonProperty("changeType") String changeType) {
+            this.changeType = changeType;
+            return this;
+        }
+
+        public Builder matchStatus(@JsonProperty("matchStatus") String matchStatus) {
+            this.matchStatus = matchStatus;
             return this;
         }
 

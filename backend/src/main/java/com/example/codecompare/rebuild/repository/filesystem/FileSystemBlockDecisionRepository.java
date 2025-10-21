@@ -43,7 +43,7 @@ public class FileSystemBlockDecisionRepository implements BlockDecisionRepositor
 
     public FileSystemBlockDecisionRepository(StorageProperties properties, ObjectMapper objectMapper) {
         this.properties = properties;
-        this.objectMapper = objectMapper;
+        this.objectMapper = configureMapper(objectMapper);
     }
 
     @Override
@@ -329,5 +329,10 @@ public class FileSystemBlockDecisionRepository implements BlockDecisionRepositor
     @JsonIgnoreProperties(ignoreUnknown = true)
     private static final class StoredSnapshots {
         private List<BlockDecisionSnapshot> snapshots = new ArrayList<>();
+    }
+
+    private ObjectMapper configureMapper(ObjectMapper mapper) {
+        ObjectMapper configured = mapper == null ? new ObjectMapper() : mapper.copy();
+        return configured.findAndRegisterModules();
     }
 }

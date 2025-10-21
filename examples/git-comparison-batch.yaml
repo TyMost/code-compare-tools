@@ -1,20 +1,42 @@
-# Batch export example configuration.
-# The structure mirrors migration.project.s/t in application.yml.
-sources:
-  - code: projectA-git
-    path: D:\Coding\code-compare-tool-pro\example\examples\projectA-git
-  # Additional sources can be added as needed:
-  # - code: projectC-git
-  #   path: D:\Coding\code-compare-tool-pro\example\examples\projectC-git
+﻿# Batch export example configuration.
+# Each pair provides an explicit source → target comparison. Paths point to the working copies containing scan data.
 
-targets:
-  - code: projectB-git
-    path: D:\Coding\code-compare-tool-pro\example\examples\projectB-git
-  # - code: projectD-git
-  #   path: D:\Coding\code-compare-tool-pro\example\examples\projectD-git
+pairs:
+  - source:
+      code: projectA-git
+      path: D:\Coding\code-compare-tools\examples\projectA-git
+    target:
+      code: projectB-git
+      path: D:\Coding\code-compare-tools\examples\projectB-git
+    git-base-ref-source: refs/heads/main
+    git-target-ref-source: refs/heads/feature/git-demo
+    git-base-ref-target: refs/heads/main
+    git-target-ref-target: refs/heads/release/git-demo
 
-# Git references override. Omit any of these to fall back to application.yml.
+  - source:
+      code: projectC-git
+      path: D:\Coding\code-compare-tools\examples\projectC-git
+    target:
+      code: projectD-git
+      path: D:\Coding\code-compare-tools\examples\projectD-git
+    git-base-ref-source: refs/heads/main
+    git-target-ref-source: refs/heads/feature/refactor-c
+    git-base-ref-target: refs/heads/main
+    git-target-ref-target: refs/heads/release/refactor-d
+
+  - source:
+      code: projectE-git
+      path: D:\Coding\code-compare-tools\examples\projectE-git
+    target:
+      code: projectF-git
+      path: D:\Coding\code-compare-tools\examples\projectF-git
+    git-base-ref-source: refs/heads/dev
+    git-target-ref-source: refs/heads/feature/new-module
+    git-base-ref-target: refs/heads/dev
+    git-target-ref-target: refs/heads/release/new-module
+
+# Optional global overrides (used when a pair omits refs)
 git-base-ref-source: refs/heads/main
-git-target-ref-source: refs/heads/feature/git-demo
+git-target-ref-source: refs/heads/feature/default
 git-base-ref-target: refs/heads/main
-git-target-ref-target: refs/heads/release/git-demo
+git-target-ref-target: refs/heads/release/default

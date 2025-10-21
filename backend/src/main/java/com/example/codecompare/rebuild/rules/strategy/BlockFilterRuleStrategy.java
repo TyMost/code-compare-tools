@@ -6,6 +6,7 @@ import com.example.codecompare.rebuild.rules.RuleHit;
 import org.springframework.util.StringUtils;
 
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -22,6 +23,9 @@ public class BlockFilterRuleStrategy extends AbstractRuleStrategy {
     @Override
     public Optional<RuleHit> evaluate(BlockDiff diff, RuleDefinition definition) {
         if (diff == null) {
+            return empty();
+        }
+        if (shouldIgnoreSynthetic(diff, definition)) {
             return empty();
         }
         String filterAction = definition.getStringParam("filterAction").orElse(null);
@@ -106,5 +110,42 @@ public class BlockFilterRuleStrategy extends AbstractRuleStrategy {
         } catch (NumberFormatException ignored) {
             return 0;
         }
+    }
+
+    private boolean shouldIgnoreSynthetic(BlockDiff diff, RuleDefinition definition) {
+        Map<String, Object> params = definition.getParams();
+        Object raw = params.get("ignoreSynthetic");
+        if (!toBoolean(raw)) {
+            return false;
+        }
+        Map<String, Object> metadata = diff.getMetadata();
+        if (metadata == null || metadata.isEmpty()) {
+            return false;
+        }
+        Object syntheticType = metadata.get("syntheticType");
+        if (syntheticType == null) {
+            syntheticType = metadata.get("synthetic_type"); // legacy key safeguard
+        }
+        return syntheticType != null;
+    }
+
+    private boolean toBoolean(Object value) {
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue() != 0;
+        }
+        if (value instanceof String) {
+            String normalized = ((String) value).trim();
+            if (normalized.isEmpty()) {
+                return false;
+            }
+            return "true".equalsIgnoreCase(normalized)
+                    || "yes".equalsIgnoreCase(normalized)
+                    || "on".equalsIgnoreCase(normalized)
+                    || "1".equals(normalized);
+        }
+        return false;
     }
 }

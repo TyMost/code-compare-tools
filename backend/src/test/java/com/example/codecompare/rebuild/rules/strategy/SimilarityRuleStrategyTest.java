@@ -3,7 +3,6 @@
 import com.example.codecompare.rebuild.block.model.BlockDiff;
 import com.example.codecompare.rebuild.rules.RuleDefinition;
 import com.example.codecompare.rebuild.rules.RuleHit;
-import com.example.codecompare.rebuild.rules.similarity.LineSimilarityAnalyzer;
 import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
@@ -15,8 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class SimilarityRuleStrategyTest {
 
-    private final LineSimilarityAnalyzer analyzer = new LineSimilarityAnalyzer();
-    private final SimilarityRuleStrategy strategy = new SimilarityRuleStrategy(analyzer);
+    private final SimilarityRuleStrategy strategy = new SimilarityRuleStrategy();
 
     @Test
     void ruleHitContainsSimilarityMetadata() {
@@ -35,11 +33,10 @@ class SimilarityRuleStrategyTest {
 
         assertThat(hitOptional).isPresent();
         RuleHit hit = hitOptional.get();
-        assertThat(hit.getMetadata()).containsKey("similarity");
-        Object payload = hit.getMetadata().get("similarity");
-        assertThat(payload).isInstanceOf(Map.class);
-        Map<?, ?> similarity = (Map<?, ?>) payload;
-        assertThat(similarity.get("similarityPercent")).isEqualTo(100d);
+        Map<String, Object> metadata = hit.getMetadata();
+        assertThat(metadata.get("similarityPercent")).isEqualTo(100d);
+        assertThat(metadata).containsEntry("existsInSource", true);
+        assertThat(metadata).containsEntry("existsInTarget", true);
     }
 
     @Test

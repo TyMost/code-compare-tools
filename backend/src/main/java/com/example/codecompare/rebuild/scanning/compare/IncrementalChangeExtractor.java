@@ -68,6 +68,7 @@ public class IncrementalChangeExtractor {
             return Collections.emptyList();
         }
         List<String> addedLines = new ArrayList<String>();
+        List<String> removedLines = new ArrayList<String>();
         for (IncrementalDiffGitHunkView hunk : gitDiff.getHunks()) {
             if (hunk == null || CollectionUtils.isEmpty(hunk.getLines())) {
                 continue;
@@ -82,15 +83,26 @@ public class IncrementalChangeExtractor {
                     if (StringUtils.hasText(payload)) {
                         addedLines.add(payload);
                     }
+                } else if (marker == '-') {
+                    String payload = rawLine.substring(1).trim();
+                    if (StringUtils.hasText(payload)) {
+                        removedLines.add(payload);
+                    }
                 }
             }
         }
-        if (addedLines.isEmpty()) {
+        List<IncrementalCodeBlock> blocks = new ArrayList<IncrementalCodeBlock>();
+        if (!addedLines.isEmpty()) {
+            int changedLines = Math.max(gitDiff.getChangedLineCount(), addedLines.size());
+            blocks.add(new IncrementalCodeBlock(IncrementalBlockType.ADD, addedLines, changedLines, null));
+        }
+        if (!removedLines.isEmpty()) {
+            int changedLines = Math.max(gitDiff.getChangedLineCount(), removedLines.size());
+            blocks.add(new IncrementalCodeBlock(IncrementalBlockType.DELETE, removedLines, changedLines, null));
+        }
+        if (blocks.isEmpty()) {
             return Collections.emptyList();
         }
-        int changedLines = Math.max(gitDiff.getChangedLineCount(), addedLines.size());
-        List<IncrementalCodeBlock> blocks = new ArrayList<IncrementalCodeBlock>(1);
-        blocks.add(new IncrementalCodeBlock(IncrementalBlockType.ADD, addedLines, changedLines, null));
         return blocks;
     }
 

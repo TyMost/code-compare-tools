@@ -8,11 +8,14 @@ import com.example.codecompare.rebuild.repository.FileMetadataRepository;
 import com.example.codecompare.rebuild.repository.config.StorageProperties;
 import com.example.codecompare.rebuild.repository.filesystem.FileSystemScanResultRepository;
 import com.example.codecompare.rebuild.repository.support.StoragePurgeService;
+import com.example.codecompare.rebuild.diff.git.GitDiffEngine;
+import com.example.codecompare.rebuild.diff.config.DiffConfigurationProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 import java.time.Clock;
 
@@ -64,9 +67,25 @@ public class ScanConfiguration {
                                            ApplicationEventPublisher eventPublisher,
                                            ProjectRootRegistry projectRootRegistry,
                                            ScanProperties scanProperties,
+                                           DiffConfigurationProperties diffConfigurationProperties,
                                            Clock clock,
                                            StoragePurgeService storagePurgeService) {
+        diffConfigurationProperties.setEngineType(scanProperties.getDiffEngine());
         return new FileScanService(fullProjectScanService, gitChangeScanner, scanResultRepository,
                 eventPublisher, projectRootRegistry, scanProperties, clock, storagePurgeService);
+    }
+
+    @Bean
+    @Primary
+    public GitChangeScanner jgitChangeScanner(ScanProperties scanProperties,
+                                              ScanResultRepository scanResultRepository,
+                                              ProjectRootRegistry projectRootRegistry,
+                                              Clock clock) {
+        return new JGitChangeScanner(scanProperties, scanResultRepository, projectRootRegistry, clock);
+    }
+
+    @Bean
+    public GitDiffEngine gitDiffEngine() {
+        return new GitDiffEngine();
     }
 }

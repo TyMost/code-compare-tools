@@ -34,7 +34,7 @@ public class FileSystemFileMetadataRepository implements FileMetadataRepository 
 
     public FileSystemFileMetadataRepository(StorageProperties properties, ObjectMapper objectMapper) {
         this.properties = properties;
-        this.objectMapper = objectMapper;
+        this.objectMapper = configureMapper(objectMapper);
     }
 
     @Override
@@ -277,5 +277,10 @@ public class FileSystemFileMetadataRepository implements FileMetadataRepository 
     private static final class StoredProject {
         public String projectCode;
         public List<FileRecord> records = new ArrayList<>();
+    }
+
+    private ObjectMapper configureMapper(ObjectMapper mapper) {
+        ObjectMapper configured = mapper == null ? new ObjectMapper() : mapper.copy();
+        return configured.findAndRegisterModules();
     }
 }

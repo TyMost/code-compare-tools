@@ -24,14 +24,17 @@ public class DemoDataInitializer {
     private final FileScanService fileScanService;
     private final ScanResultRepository scanResultRepository;
     private final ProjectRootRegistry projectRootRegistry;
+    private final ScanProperties scanProperties;
     private final AtomicBoolean initialized = new AtomicBoolean(false);
 
     public DemoDataInitializer(FileScanService fileScanService,
                                ScanResultRepository scanResultRepository,
-                               ProjectRootRegistry projectRootRegistry) {
+                               ProjectRootRegistry projectRootRegistry,
+                               ScanProperties scanProperties) {
         this.fileScanService = fileScanService;
         this.scanResultRepository = scanResultRepository;
         this.projectRootRegistry = projectRootRegistry;
+        this.scanProperties = scanProperties;
     }
 
     @EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
@@ -42,6 +45,10 @@ public class DemoDataInitializer {
     @PostConstruct
     void triggerScanIfNecessary() {
         if (!initialized.compareAndSet(false, true)) {
+            return;
+        }
+        if (!scanProperties.isAutoScanOnStartup()) {
+            log.info("Skipping demo full scan because auto-scan-on-startup is disabled.");
             return;
         }
         List<ProjectRootRegistry.ProjectRootDescriptor> sources = projectRootRegistry.getSources();

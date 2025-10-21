@@ -1,10 +1,10 @@
 annotation:
   default: |
-    /** 迁移生成的代码片段开始 (blockId=${blockId}) 1234 */
+    /** 迁移生成的代码片段开始*/
     ${code}
     /** 迁移生成的代码片段结束 */
   migrate_adapt: |
-    /** 迁移适配段 (blockId=${blockId}) */
+    /** 迁移适配段*/
     /** 目标仓库原实现开始 */
     ${original}
     /** 目标仓库原实现结束 */

@@ -40,7 +40,7 @@ public class FileSystemDiffSnapshotRepository implements DiffSnapshotRepository 
 
     public FileSystemDiffSnapshotRepository(StorageProperties properties, ObjectMapper objectMapper) {
         this.properties = properties;
-        this.objectMapper = objectMapper;
+        this.objectMapper = configureMapper(objectMapper);
     }
 
     @Override
@@ -288,5 +288,10 @@ public class FileSystemDiffSnapshotRepository implements DiffSnapshotRepository 
     @JsonIgnoreProperties(ignoreUnknown = true)
     private static final class StoredDiffSnapshots {
         private List<DiffSnapshotDocument> snapshots = new ArrayList<>();
+    }
+
+    private ObjectMapper configureMapper(ObjectMapper mapper) {
+        ObjectMapper configured = mapper == null ? new ObjectMapper() : mapper.copy();
+        return configured.findAndRegisterModules();
     }
 }

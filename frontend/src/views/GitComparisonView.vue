@@ -34,6 +34,27 @@
           刷新数据
         </el-button>
       </div>
+      <div class="batch-controls">
+        <el-input
+          v-model="batchConfigPath"
+          size="small"
+          placeholder="批量配置文件路径（留空使用默认配置）"
+          class="batch-input"
+          clearable
+        />
+        <el-checkbox v-model="batchRefresh" size="small" class="batch-toggle">
+          重新扫描 Git 差异
+        </el-checkbox>
+        <el-button
+          type="success"
+          size="small"
+          :loading="exporting"
+          icon="el-icon-download"
+          @click="handleBatchExport"
+        >
+          导出批量相似度
+        </el-button>
+      </div>
     </el-card>
 
     <div v-if="comparison" class="project-overview">
@@ -311,18 +332,22 @@
 </template>
 
 <script>
-import { mapState, mapGetters, mapActions } from 'vuex';
-import dayjs from 'dayjs';
+  import { mapState, mapGetters, mapActions } from 'vuex';
+  import dayjs from 'dayjs';
+  import { exportGitComparisonBatch } from '@/api/gitComparison';
 
 export default {
   name: 'GitComparisonView',
-  data() {
-    return {
-      localSourceKey: '',
-      localTargetKey: '',
-      expandedKeys: [],
-    };
-  },
+    data() {
+      return {
+        localSourceKey: '',
+        localTargetKey: '',
+        expandedKeys: [],
+        batchConfigPath: '',
+        batchRefresh: false,
+        exporting: false,
+      };
+    },
   computed: {
     ...mapState('gitComparison', [
       'overview',
@@ -434,16 +459,87 @@ export default {
       await this.fetchComparison();
       this.persistKeys();
     },
-    async handleRefresh() {
-      this.setSourceProjectKey((this.localSourceKey || '').trim());
-      this.setTargetProjectKey((this.localTargetKey || '').trim());
-      this.expandedKeys = [];
-      await this.fetchComparison({ refresh: true });
-      this.persistKeys();
-    },
-    handleExpandChange(row, expandedRows) {
-      this.expandedKeys = expandedRows.map((item) => item.filePath);
-    },
+      async handleRefresh() {
+        this.setSourceProjectKey((this.localSourceKey || '').trim());
+        this.setTargetProjectKey((this.localTargetKey || '').trim());
+        this.expandedKeys = [];
+        await this.fetchComparison({ refresh: true });
+        this.persistKeys();
+      },
+      async handleBatchExport() {
+        if (this.exporting) {
+          return;
+        }
+        this.exporting = true;
+        try {
+          const params = {};
+          const trimmedPath = (this.batchConfigPath || '').trim();
+          if (trimmedPath) {
+            params.configPath = trimmedPath;
+          }
+          if (this.batchRefresh) {
+            params.refresh = true;
+          }
+          const response = await exportGitComparisonBatch(params);
+          const { data, headers } = response || {};
+          if (!data) {
+            throw new Error('未获取到导出数据');
+          }
+          const contentType = headers?.['content-type']
+            || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+          const blob = new Blob([data], { type: contentType });
+          const filename = this.resolveExportFilename(headers) || this.buildFallbackFilename();
+          const link = document.createElement('a');
+          const url = window.URL.createObjectURL(blob);
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(url);
+          this.$message.success('批量导出任务已完成');
+        } catch (error) {
+          console.error('[批量导出失败]', error);
+          const message = error?.response?.data?.message || error.message || '批量导出失败';
+          this.$message.error(message);
+        } finally {
+          this.exporting = false;
+        }
+      },
+      resolveExportFilename(headers = {}) {
+        const disposition = headers['content-disposition'] || headers['Content-Disposition'];
+        if (!disposition) {
+          return '';
+        }
+        const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+        if (utf8Match && utf8Match[1]) {
+          try {
+            return decodeURIComponent(utf8Match[1]);
+          } catch (error) {
+            console.warn('Decode UTF-8 filename failed', error);
+            return utf8Match[1];
+          }
+        }
+        const simpleMatch = disposition.match(/filename="?([^";]+)"?/i);
+        if (simpleMatch && simpleMatch[1]) {
+          try {
+            return decodeURIComponent(simpleMatch[1]);
+          } catch (error) {
+            console.warn('Decode filename failed', error);
+            return simpleMatch[1];
+          }
+        }
+        return '';
+      },
+      buildFallbackFilename() {
+        const now = new Date();
+        const pad = (value) => String(value).padStart(2, '0');
+        const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+        return `git-comparison-${timestamp}.xlsx`;
+      },
+      handleExpandChange(row, expandedRows) {
+        this.expandedKeys = expandedRows.map((item) => item.filePath);
+      },
     hasDualComparison(row) {
       if (!row || !row.dualComparison) {
         return false;
@@ -644,18 +740,33 @@ export default {
   .filter-card {
     margin-bottom: 16px;
 
-    .filters {
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      .filters {
+        display: flex;
+        align-items: center;
+        gap: 8px;
 
-      .filter-input {
-        width: 220px;
+        .filter-input {
+          width: 220px;
+        }
+      }
+      .batch-controls {
+        margin-top: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+
+        .batch-input {
+          flex: 1;
+          min-width: 260px;
+        }
+
+        .batch-toggle {
+          white-space: nowrap;
+        }
       }
     }
-  }
 
-  .project-overview {
+    .project-overview {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 16px;

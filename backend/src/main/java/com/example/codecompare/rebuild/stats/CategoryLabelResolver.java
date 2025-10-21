@@ -3,6 +3,7 @@ package com.example.codecompare.rebuild.stats;
 import com.example.codecompare.rebuild.rules.RuleDefinition;
 import com.example.codecompare.rebuild.rules.RuleRegistry;
 import com.example.codecompare.rebuild.rules.RuleSet;
+import com.example.codecompare.rebuild.scanning.BlockLabelConstants;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -22,9 +23,12 @@ public class CategoryLabelResolver {
 
     public String resolve(String key) {
         if (!StringUtils.hasText(key)) {
-            return "未分类";
+            return "\u672a\u5206\u7c7b";
         }
         String normalizedKey = key.trim();
+        if (BlockLabelConstants.STATUS_NO_RULES.equalsIgnoreCase(normalizedKey)) {
+            return "\u65e0\u89c4\u5219\u547d\u4e2d";
+        }
         RuleDefinition matched = findDefinition(normalizedKey);
         if (matched != null) {
             return matched.getResolvedDisplayName();
@@ -36,7 +40,11 @@ public class CategoryLabelResolver {
         if (!StringUtils.hasText(key)) {
             return null;
         }
-        RuleDefinition matched = findDefinition(key.trim());
+        String normalizedKey = key.trim();
+        if (BlockLabelConstants.STATUS_NO_RULES.equalsIgnoreCase(normalizedKey)) {
+            return "#909399";
+        }
+        RuleDefinition matched = findDefinition(normalizedKey);
         if (matched == null) {
             return null;
         }

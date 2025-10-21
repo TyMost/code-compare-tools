@@ -7,8 +7,11 @@ import com.example.codecompare.rebuild.api.dto.IncrementalDiffFileDetailView;
 import com.example.codecompare.rebuild.core.properties.ApplicationProperties;
 import com.example.codecompare.rebuild.core.support.ProjectRootRegistry;
 import com.example.codecompare.rebuild.core.support.ProjectRootRegistry.ProjectRootDescriptor;
+import com.example.codecompare.rebuild.scanning.FileScanService;
 import com.example.codecompare.rebuild.scanning.IncrementalDiffFacade;
+import com.example.codecompare.rebuild.scanning.ProjectScanRequest;
 import com.example.codecompare.rebuild.scanning.ScanProperties;
+import com.example.codecompare.rebuild.scanning.ScanResultRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.apache.poi.ss.usermodel.Cell;
@@ -34,13 +37,11 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -56,6 +57,8 @@ public class GitComparisonBatchService {
     private final ApplicationProperties applicationProperties;
     private final ScanProperties scanProperties;
     private final ProjectRootRegistry projectRootRegistry;
+    private final FileScanService fileScanService;
+    private final ScanResultRepository scanResultRepository;
     private final Clock clock;
     private final ObjectMapper yamlMapper;
 
@@ -63,28 +66,27 @@ public class GitComparisonBatchService {
                                      ApplicationProperties applicationProperties,
                                      ScanProperties scanProperties,
                                      ProjectRootRegistry projectRootRegistry,
+                                     FileScanService fileScanService,
+                                     ScanResultRepository scanResultRepository,
                                      Clock clock) {
         this.incrementalDiffFacade = incrementalDiffFacade;
         this.applicationProperties = applicationProperties;
         this.scanProperties = scanProperties;
         this.projectRootRegistry = projectRootRegistry;
+        this.fileScanService = fileScanService;
+        this.scanResultRepository = scanResultRepository;
         this.clock = clock;
         this.yamlMapper = new ObjectMapper(new YAMLFactory());
         this.yamlMapper.findAndRegisterModules();
     }
 
-    /**
-     * Generates an Excel export for the given configuration path. When {@code configPath} is empty,
-     * falls back to {@code application.yml} configuration.
-     */
     public GitComparisonBatchExportResult export(String configPath, boolean refresh) {
         GitComparisonBatchConfig config = resolveConfig(configPath);
         validateConfig(config);
 
-        List<ProjectEntry> sources = toProjectEntries(config.getSources());
-        List<ProjectEntry> targets = toProjectEntries(config.getTargets());
-        List<ProjectPair> pairs = buildPairs(sources, targets);
-
+        List<ProjectEntry> sources = toProjectEntries(config.getSources(), "source");
+        List<ProjectEntry> targets = toProjectEntries(config.getTargets(), "target");
+        List<ProjectPair> pairs = resolvePairs(config, sources, targets);
         if (pairs.isEmpty()) {
             throw new IllegalArgumentException("No source/target combinations are available for batch export.");
         }
@@ -93,9 +95,7 @@ public class GitComparisonBatchService {
         applyGitReferences(config);
 
         try {
-            if (refresh) {
-                refreshProjects(sources, targets);
-            }
+            initializeProjects(pairs, refresh);
             BatchComputationResult computation = computePairs(pairs);
             byte[] content = writeWorkbook(computation);
             String filename = buildFilename(config);
@@ -111,16 +111,16 @@ public class GitComparisonBatchService {
         }
         Path path = Paths.get(configPath).toAbsolutePath().normalize();
         if (!Files.exists(path)) {
-            throw new IllegalArgumentException("配置文件不存在: " + path);
+            throw new IllegalArgumentException("Configuration file does not exist: " + path);
         }
         try {
             byte[] bytes = Files.readAllBytes(path);
             if (bytes.length == 0) {
-                throw new IllegalArgumentException("配置文件为空: " + path);
+                throw new IllegalArgumentException("Configuration file is empty: " + path);
             }
             return yamlMapper.readValue(bytes, GitComparisonBatchConfig.class);
         } catch (IOException ex) {
-            throw new IllegalArgumentException("无法读取配置文件: " + path, ex);
+            throw new IllegalArgumentException("Failed to read configuration file: " + path, ex);
         }
     }
 
@@ -147,74 +147,180 @@ public class GitComparisonBatchService {
     }
 
     private void validateConfig(GitComparisonBatchConfig config) {
-        if (CollectionUtils.isEmpty(config.getSources())) {
-            throw new IllegalArgumentException("配置中的 sources 列表不能为空。");
-        }
-        if (CollectionUtils.isEmpty(config.getTargets())) {
-            throw new IllegalArgumentException("配置中的 targets 列表不能为空。");
-        }
-        List<ProjectEntry> sources = toProjectEntries(config.getSources());
-        List<ProjectEntry> targets = toProjectEntries(config.getTargets());
-        for (ProjectEntry entry : sources) {
-            validateProjectEntry(entry, "source");
-        }
-        for (ProjectEntry entry : targets) {
-            validateProjectEntry(entry, "target");
-        }
-    }
-
-    private void validateProjectEntry(ProjectEntry entry, String role) {
-        if (!StringUtils.hasText(entry.code)) {
-            throw new IllegalArgumentException("配置中的 " + role + " 项缺少 code 字段。");
-        }
-        Optional<ProjectRootDescriptor> descriptorOptional = projectRootRegistry.findByCode(entry.code);
-        if (!descriptorOptional.isPresent()) {
-            throw new IllegalArgumentException("未在项目根目录注册表中找到 code=" + entry.code + " 对应的路径，请确认 application.yml 的 migration.project 配置。");
-        }
-        if (StringUtils.hasText(entry.path)) {
-            Path normalizedPath = Paths.get(entry.path).toAbsolutePath().normalize();
-            Path descriptorPath = descriptorOptional.get().getPath().toAbsolutePath().normalize();
-            if (!descriptorPath.equals(normalizedPath)) {
-                throw new IllegalArgumentException("配置的路径 " + normalizedPath + " 与注册表中的路径 " + descriptorPath + " 不一致。");
+        if (!CollectionUtils.isEmpty(config.getPairs())) {
+            for (GitComparisonBatchConfig.PairEntry pairEntry : config.getPairs()) {
+                ProjectEntry source = toProjectEntry(pairEntry == null ? null : pairEntry.getSource(), "pair source");
+                ProjectEntry target = toProjectEntry(pairEntry == null ? null : pairEntry.getTarget(), "pair target");
+                validateProjectEntry(source, "source");
+                validateProjectEntry(target, "target");
             }
+            return;
         }
+        List<ProjectEntry> sources = toProjectEntries(config.getSources(), "source");
+        List<ProjectEntry> targets = toProjectEntries(config.getTargets(), "target");
+        if (CollectionUtils.isEmpty(sources)) {
+            throw new IllegalArgumentException("Configuration must declare at least one source project.");
+        }
+        if (CollectionUtils.isEmpty(targets)) {
+            throw new IllegalArgumentException("Configuration must declare at least one target project.");
+        }
+        sources.forEach(entry -> validateProjectEntry(entry, "source"));
+        targets.forEach(entry -> validateProjectEntry(entry, "target"));
     }
 
-    private List<ProjectEntry> toProjectEntries(List<GitComparisonBatchConfig.ProjectEntry> entries) {
+    private List<ProjectEntry> toProjectEntries(List<GitComparisonBatchConfig.ProjectEntry> entries, String role) {
         if (CollectionUtils.isEmpty(entries)) {
             return Collections.emptyList();
         }
         List<ProjectEntry> result = new ArrayList<>(entries.size());
         for (GitComparisonBatchConfig.ProjectEntry entry : entries) {
-            if (entry == null) {
-                continue;
-            }
-            String code = entry.getCode() == null ? null : entry.getCode().trim();
-            String path = entry.getPath() == null ? null : entry.getPath().trim();
-            if (StringUtils.hasText(code)) {
-                result.add(new ProjectEntry(code, path));
+            ProjectEntry converted = toProjectEntry(entry, role);
+            if (converted != null) {
+                result.add(converted);
             }
         }
         return result;
     }
 
-    private List<ProjectPair> buildPairs(List<ProjectEntry> sources, List<ProjectEntry> targets) {
+    private ProjectEntry toProjectEntry(GitComparisonBatchConfig.ProjectEntry entry, String role) {
+        if (entry == null) {
+            throw new IllegalArgumentException("Project entry for " + role + " is missing.");
+        }
+        String code = entry.getCode() == null ? null : entry.getCode().trim();
+        if (!StringUtils.hasText(code)) {
+            throw new IllegalArgumentException("Project entry for " + role + " is missing a code value.");
+        }
+        String path = null;
+        if (entry.getPath() != null) {
+            String trimmed = entry.getPath().trim();
+            if (StringUtils.hasText(trimmed)) {
+                path = resolveAndVerifyPath(trimmed).toString();
+            }
+        }
+        return new ProjectEntry(code, path);
+    }
+
+    private List<ProjectPair> resolvePairs(GitComparisonBatchConfig config,
+                                           List<ProjectEntry> sources,
+                                           List<ProjectEntry> targets) {
+        if (!CollectionUtils.isEmpty(config.getPairs())) {
+            List<ProjectPair> result = new ArrayList<>(config.getPairs().size());
+            for (GitComparisonBatchConfig.PairEntry pairEntry : config.getPairs()) {
+                ProjectEntry source = toProjectEntry(pairEntry == null ? null : pairEntry.getSource(), "pair source");
+                ProjectEntry target = toProjectEntry(pairEntry == null ? null : pairEntry.getTarget(), "pair target");
+                if (source != null && target != null) {
+                    result.add(new ProjectPair(
+                            source,
+                            target,
+                            pairEntry.getGitBaseRefSource(),
+                            pairEntry.getGitTargetRefSource(),
+                            pairEntry.getGitBaseRefTarget(),
+                            pairEntry.getGitTargetRefTarget()));
+                }
+            }
+            return result;
+        }
         List<ProjectPair> pairs = new ArrayList<>();
         for (ProjectEntry source : sources) {
             for (ProjectEntry target : targets) {
-                pairs.add(new ProjectPair(source, target));
+                pairs.add(new ProjectPair(source, target, null, null, null, null));
             }
         }
         return pairs;
     }
 
-    private void refreshProjects(List<ProjectEntry> sources, List<ProjectEntry> targets) {
-        Set<String> refreshed = new LinkedHashSet<>();
-        sources.forEach(entry -> refreshed.add(entry.code));
-        targets.forEach(entry -> refreshed.add(entry.code));
-        for (String projectCode : refreshed) {
-            log.info("Refreshing incremental diff for project {}", projectCode);
-            incrementalDiffFacade.loadOverview(projectCode, true);
+    private void initializeProjects(List<ProjectPair> pairs, boolean refresh) {
+        Map<String, ProjectEntry> combined = new LinkedHashMap<>();
+        for (ProjectPair pair : pairs) {
+            combined.put(pair.source.code, pair.source);
+            combined.put(pair.target.code, pair.target);
+        }
+        for (ProjectEntry entry : combined.values()) {
+            ensureProjectInitialized(entry, refresh);
+        }
+    }
+
+    private void validateProjectEntry(ProjectEntry entry, String role) {
+        if (entry == null) {
+            throw new IllegalArgumentException("Project entry for " + role + " is missing.");
+        }
+        if (!StringUtils.hasText(entry.code)) {
+            throw new IllegalArgumentException("Configured " + role + " entry is missing a code value.");
+        }
+        Optional<ProjectRootDescriptor> descriptorOptional = projectRootRegistry.findByCode(entry.code);
+        if (descriptorOptional.isPresent() && StringUtils.hasText(entry.path)) {
+            Path normalizedPath = resolveAndVerifyPath(entry.path);
+            Path descriptorPath = descriptorOptional.get().getPath().toAbsolutePath().normalize();
+            if (!descriptorPath.equals(normalizedPath)) {
+                throw new IllegalArgumentException("Configured path " + normalizedPath + " does not match registered path " + descriptorPath + ".");
+            }
+        }
+        if (!descriptorOptional.isPresent()) {
+            if (!StringUtils.hasText(entry.path)) {
+                throw new IllegalArgumentException("Project " + entry.code + " is not registered and no path was provided.");
+            }
+            Path normalizedPath = resolveAndVerifyPath(entry.path);
+            if (!Files.exists(normalizedPath)) {
+                throw new IllegalArgumentException("Project " + entry.code + " path does not exist: " + normalizedPath);
+            }
+            if (!Files.isDirectory(normalizedPath)) {
+                throw new IllegalArgumentException("Project " + entry.code + " path is not a directory: " + normalizedPath);
+            }
+        }
+    }
+
+    private void ensureProjectInitialized(ProjectEntry entry, boolean refresh) {
+        Optional<ProjectRootDescriptor> descriptorOptional = projectRootRegistry.findByCode(entry.code);
+        if (descriptorOptional.isPresent()) {
+            boolean summaryExists = scanResultRepository.findLatestSummary(entry.code).isPresent();
+            boolean shouldRefresh = refresh || !summaryExists;
+            incrementalDiffFacade.loadOverview(entry.code, shouldRefresh);
+            return;
+        }
+        Path normalizedPath = resolveAndVerifyPath(entry.path);
+        if (!Files.exists(normalizedPath)) {
+            throw new IllegalArgumentException("Project " + entry.code + " path does not exist: " + normalizedPath);
+        }
+        if (!Files.isDirectory(normalizedPath)) {
+            throw new IllegalArgumentException("Project " + entry.code + " path is not a directory: " + normalizedPath);
+        }
+        boolean summaryExists = scanResultRepository.findLatestSummary(entry.code).isPresent();
+        if (refresh || !summaryExists) {
+            log.info("Running incremental scan for project {} using path {}", entry.code, normalizedPath);
+            ProjectScanRequest request = ProjectScanRequest.builder()
+                    .projectCode(entry.code)
+                    .addRoot(normalizedPath)
+                    .skipHidden(true)
+                    .build();
+            fileScanService.scanIncremental(request);
+        }
+    }
+
+    private GitReferenceSnapshot applyPairGitReferences(ProjectPair pair) {
+        if (pair == null || !pair.hasGitOverrides()) {
+            return null;
+        }
+        GitReferenceSnapshot snapshot = GitReferenceSnapshot.capture(scanProperties);
+        if (StringUtils.hasText(pair.gitBaseRefSource)) {
+            scanProperties.setGitBaseRefSource(pair.gitBaseRefSource);
+        }
+        if (StringUtils.hasText(pair.gitTargetRefSource)) {
+            scanProperties.setGitTargetRefSource(pair.gitTargetRefSource);
+        }
+        if (StringUtils.hasText(pair.gitBaseRefTarget)) {
+            scanProperties.setGitBaseRefTarget(pair.gitBaseRefTarget);
+        }
+        if (StringUtils.hasText(pair.gitTargetRefTarget)) {
+            scanProperties.setGitTargetRefTarget(pair.gitTargetRefTarget);
+        }
+        return snapshot;
+    }
+
+    private Path resolveAndVerifyPath(String rawPath) {
+        try {
+            return Paths.get(rawPath).toAbsolutePath().normalize();
+        } catch (RuntimeException ex) {
+            throw new IllegalArgumentException("Invalid path value: " + rawPath, ex);
         }
     }
 
@@ -222,23 +328,30 @@ public class GitComparisonBatchService {
         List<FileRow> fileRows = new ArrayList<>();
         Map<String, RepositoryAggregate> aggregates = new LinkedHashMap<>();
         for (ProjectPair pair : pairs) {
-            GitComparisonResponseView response = incrementalDiffFacade.compareProjects(
-                    pair.source.code,
-                    pair.target.code,
-                    false);
-            if (response == null || CollectionUtils.isEmpty(response.getFiles())) {
-                continue;
-            }
-            for (GitComparisonFileView fileView : response.getFiles()) {
-                String filePath = fileView.getFilePath();
-                DualIncrementalComparisonView dual = fileView.getDualComparison();
-                double similarity = dual == null ? 0d : safeDouble(dual.getFileSimilarity());
-                fileRows.add(new FileRow(pair.source.code, pair.target.code, filePath, similarity));
+            GitReferenceSnapshot overrideSnapshot = applyPairGitReferences(pair);
+            try {
+                GitComparisonResponseView response = incrementalDiffFacade.compareProjects(
+                        pair.source.code,
+                        pair.target.code,
+                        false);
+                if (response == null || CollectionUtils.isEmpty(response.getFiles())) {
+                    continue;
+                }
+                for (GitComparisonFileView fileView : response.getFiles()) {
+                    String filePath = fileView.getFilePath();
+                    DualIncrementalComparisonView dual = fileView.getDualComparison();
+                    double similarity = dual == null ? 0d : safeDouble(dual.getFileSimilarity());
+                    fileRows.add(new FileRow(pair.source.code, pair.target.code, filePath, similarity));
 
-                int sourceLineCount = totalLines(fileView.getSource());
-                int targetLineCount = totalLines(fileView.getTarget());
-                accumulateAggregate(aggregates, pair, Role.SOURCE, sourceLineCount, similarity);
-                accumulateAggregate(aggregates, pair, Role.TARGET, targetLineCount, similarity);
+                    int sourceLineCount = totalLines(fileView.getSource());
+                    int targetLineCount = totalLines(fileView.getTarget());
+                    accumulateAggregate(aggregates, pair, Role.SOURCE, sourceLineCount, similarity);
+                    accumulateAggregate(aggregates, pair, Role.TARGET, targetLineCount, similarity);
+                }
+            } finally {
+                if (overrideSnapshot != null) {
+                    overrideSnapshot.restore(scanProperties);
+                }
             }
         }
         return new BatchComputationResult(fileRows, new ArrayList<>(aggregates.values()));
@@ -264,7 +377,7 @@ public class GitComparisonBatchService {
             workbook.write(out);
             return out.toByteArray();
         } catch (IOException ex) {
-            throw new IllegalStateException("生成 Excel 报告失败", ex);
+            throw new IllegalStateException("Failed to generate Excel workbook", ex);
         }
     }
 
@@ -328,6 +441,12 @@ public class GitComparisonBatchService {
                 .map(GitComparisonBatchConfig.ProjectEntry::getCode)
                 .filter(StringUtils::hasText)
                 .collect(Collectors.joining("_"));
+        if (!StringUtils.hasText(sourceNames) && !CollectionUtils.isEmpty(config.getPairs())) {
+            sourceNames = config.getPairs().stream()
+                    .map(pair -> pair.getSource() == null ? null : pair.getSource().getCode())
+                    .filter(StringUtils::hasText)
+                    .collect(Collectors.joining("_"));
+        }
         if (!StringUtils.hasText(sourceNames)) {
             sourceNames = "sources";
         }
@@ -350,10 +469,7 @@ public class GitComparisonBatchService {
     }
 
     private double safeDouble(Number value) {
-        if (value == null) {
-            return 0d;
-        }
-        return value.doubleValue();
+        return value == null ? 0d : value.doubleValue();
     }
 
     private int totalLines(IncrementalDiffFileDetailView detailView) {
@@ -388,10 +504,30 @@ public class GitComparisonBatchService {
     private static final class ProjectPair {
         private final ProjectEntry source;
         private final ProjectEntry target;
+        private final String gitBaseRefSource;
+        private final String gitTargetRefSource;
+        private final String gitBaseRefTarget;
+        private final String gitTargetRefTarget;
 
-        private ProjectPair(ProjectEntry source, ProjectEntry target) {
+        private ProjectPair(ProjectEntry source,
+                             ProjectEntry target,
+                             String gitBaseRefSource,
+                             String gitTargetRefSource,
+                             String gitBaseRefTarget,
+                             String gitTargetRefTarget) {
             this.source = Objects.requireNonNull(source, "source must not be null");
             this.target = Objects.requireNonNull(target, "target must not be null");
+            this.gitBaseRefSource = gitBaseRefSource;
+            this.gitTargetRefSource = gitTargetRefSource;
+            this.gitBaseRefTarget = gitBaseRefTarget;
+            this.gitTargetRefTarget = gitTargetRefTarget;
+        }
+
+        private boolean hasGitOverrides() {
+            return StringUtils.hasText(gitBaseRefSource)
+                    || StringUtils.hasText(gitTargetRefSource)
+                    || StringUtils.hasText(gitBaseRefTarget)
+                    || StringUtils.hasText(gitTargetRefTarget);
         }
     }
 

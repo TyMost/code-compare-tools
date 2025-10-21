@@ -358,6 +358,25 @@ public class ProjectDiffGenerator implements ApplicationListener<ScanCompletedEv
                 : Collections.singletonMap("gitDiff", context.gitDiffPayload);
 
         if (context.records.isEmpty()) {
+            if (context.syntheticBlocks > 0 || !context.labelCounts.isEmpty()) {
+                DiffSnapshotDocument snapshotDocument = DiffSnapshotDocument.builder()
+                        .comparisonId(projectCode)
+                        .filePath(relativePath)
+                        .sourceProjectCode(sourceCode)
+                        .targetProjectCode(targetCode)
+                        .totalBlocks(context.syntheticBlocks)
+                        .unlabeledBlocks(context.unlabeled)
+                        .averageSimilarity(fileSimilarity)
+                        .labelCounts(context.labelCounts)
+                        .lineCounts(context.lineCounts)
+                        .totalLineCount(fileTotalLines)
+                        .decisionIds(Collections.emptyList())
+                        .gitSnapshots(gitSnapshots)
+                        .gitDiff(gitDiffContainer)
+                        .build();
+                diffSnapshotRepository.save(snapshotDocument);
+                return true;
+            }
             int remainingLines = countLines(StringUtils.hasText(targetContent) ? targetContent : sourceContent);
             if (remainingLines > 0) {
                 BlockDiff syntheticBlock = buildFullFileSyntheticBlock(sourceContent, targetContent, remainingLines);
@@ -415,7 +434,7 @@ public class ProjectDiffGenerator implements ApplicationListener<ScanCompletedEv
                 .filePath(relativePath)
                 .sourceProjectCode(sourceCode)
                 .targetProjectCode(targetCode)
-                .totalBlocks(context.records.size())
+                .totalBlocks(context.records.size() + context.syntheticBlocks)
                 .unlabeledBlocks(context.unlabeled)
                 .averageSimilarity(fileSimilarity)
                 .labelCounts(context.labelCounts)
@@ -433,24 +452,42 @@ public class ProjectDiffGenerator implements ApplicationListener<ScanCompletedEv
         if (block == null) {
             return;
         }
-        boolean synthetic = isSyntheticBlock(block);
-        BlockDiff normalized = blockDiffLabeler.label(block);
-        if ((normalized == null || normalized.isFilteredOut()) && synthetic) {
-            normalized = ensureSyntheticMigration(block, normalized);
-        }
-        if (normalized == null || normalized.isFilteredOut()) {
+        BlockDiff labelled = blockDiffLabeler.label(block);
+        if (labelled == null) {
             return;
         }
+        boolean synthetic = isSynthetic(block) || isSynthetic(labelled);
+        if (labelled.isFilteredOut()) {
+            if (synthetic) {
+                accumulateMetrics(labelled, resolveStatus(labelled), Math.max(1, labelled.getChangedLineCount()), context, true);
+                context.syntheticBlocks++;
+            }
+            return;
+        }
+        BlockDiff normalized = sanitizeSyntheticMetadata(labelled);
+        if (normalized == null) {
+            return;
+        }
+        if (normalized.isFilteredOut()) {
+            if (synthetic) {
+                accumulateMetrics(normalized, resolveStatus(normalized), Math.max(1, normalized.getChangedLineCount()), context, true);
+                context.syntheticBlocks++;
+            }
+            return;
+        }
+
         int changedLines = normalized.getChangedLineCount();
         int deltaLines = Math.max(1, changedLines);
-        context.changedLineTotal += deltaLines;
-        context.similaritySum += normalized.getSimilarityScore();
-        if (CollectionUtils.isEmpty(normalized.getLabels())) {
-            context.unlabeled++;
-        }
 
         String status = resolveStatus(normalized);
         String statusLabel = resolveStatusLabel(normalized, status);
+
+        accumulateMetrics(normalized, status, deltaLines, context, synthetic);
+
+        if (synthetic) {
+            context.syntheticBlocks++;
+            return;
+        }
 
         Map<String, Object> metadata = new LinkedHashMap<String, Object>();
         int segmentStart = normalized.getTargetStartLine();
@@ -468,14 +505,8 @@ public class ProjectDiffGenerator implements ApplicationListener<ScanCompletedEv
                     metadata.put(entry.getKey(), entry.getValue());
                 }
             }
-            if (normalizedMetadata.containsKey("syntheticType")) {
-                metadata.put("synthetic", Boolean.TRUE);
-            }
         }
 
-        double similarityRatio = normalized.getSimilarityScore() / 100d;
-        context.weightedLineScore += deltaLines * similarityRatio;
-        context.weightedLineCount += deltaLines;
         if (!context.gitMetadataAttached) {
             if (!CollectionUtils.isEmpty(context.gitSnapshots)) {
                 metadata.put("gitSnapshots", context.gitSnapshots);
@@ -498,17 +529,6 @@ public class ProjectDiffGenerator implements ApplicationListener<ScanCompletedEv
                 .build();
         context.records.add(record);
         context.decisionIds.add(record.getId());
-
-        if (CollectionUtils.isEmpty(normalized.getLabelIds())) {
-            String effectiveStatus = StringUtils.hasText(status) ? status : BlockLabelConstants.STATUS_NO_RULES;
-            context.labelCounts.merge(effectiveStatus, 1, Integer::sum);
-            context.lineCounts.merge(effectiveStatus, deltaLines, Integer::sum);
-        } else {
-            for (String label : normalized.getLabelIds()) {
-                context.labelCounts.merge(label, 1, Integer::sum);
-                context.lineCounts.merge(label, deltaLines, Integer::sum);
-            }
-        }
     }
 
     private BlockDiff buildFullFileSyntheticBlock(String sourceContent,
@@ -559,47 +579,86 @@ public class ProjectDiffGenerator implements ApplicationListener<ScanCompletedEv
                 .build();
     }
 
-    private boolean isSyntheticBlock(BlockDiff block) {
-        if (block == null) {
-            return false;
+    private BlockDiff sanitizeSyntheticMetadata(BlockDiff diff) {
+        if (diff == null) {
+            return null;
         }
-        Map<String, Object> metadata = block.getMetadata();
+        Map<String, Object> metadata = diff.getMetadata();
         if (metadata == null || metadata.isEmpty()) {
-            return false;
+            return diff;
         }
-        Object type = metadata.get("syntheticType");
-        if (type == null) {
-            return false;
+        boolean hasSynthetic = metadata.containsKey("syntheticType") || metadata.containsKey("synthetic_type");
+        if (!hasSynthetic) {
+            return diff;
         }
-        String normalized = String.valueOf(type);
-        return "full-file".equalsIgnoreCase(normalized) || "residual".equalsIgnoreCase(normalized);
+        Map<String, Object> sanitized = new LinkedHashMap<String, Object>(metadata);
+        sanitized.remove("syntheticType");
+        sanitized.remove("synthetic_type");
+        if (sanitized.isEmpty()) {
+            sanitized = Collections.emptyMap();
+        }
+        return BlockDiff.from(diff)
+                .metadata(sanitized)
+                .build();
     }
 
-    private BlockDiff ensureSyntheticMigration(BlockDiff original, BlockDiff labelled) {
-        DiffMetrics metrics = labelled != null && labelled.getDiffMetrics() != null
-                ? labelled.getDiffMetrics()
-                : original.getDiffMetrics();
-        if (metrics == null) {
-            metrics = DiffMetrics.of("", "", 100d);
+    private void accumulateMetrics(BlockDiff diff,
+                                   String status,
+                                   int deltaLines,
+                                   BlockProcessingContext context,
+                                   boolean synthetic) {
+        context.changedLineTotal += deltaLines;
+        double similarity = diff.getSimilarityScore();
+        double similarityRatio = similarity / 100d;
+        context.weightedLineScore += deltaLines * similarityRatio;
+        context.weightedLineCount += deltaLines;
+        if (!synthetic) {
+            context.similaritySum += similarity;
+            if (CollectionUtils.isEmpty(diff.getLabels())) {
+                context.unlabeled++;
+            }
         }
-        BlockDiff.LabelDescriptor descriptor = new BlockDiff.LabelDescriptor(
-                "synthetic-migrated",
-                BlockLabelConstants.STATUS_MIGRATED,
-                BlockLabelConstants.LABEL_MIGRATED,
-                BlockLabelConstants.STATUS_MIGRATED,
-                1,
-                BlockLabelConstants.COLOR_MIGRATED,
-                "synthetic",
-                null
-        );
-        return BlockDiff.from(original)
-                .labelIds(Collections.singletonList(BlockLabelConstants.STATUS_MIGRATED))
-                .labels(Collections.singletonList(BlockLabelConstants.LABEL_MIGRATED))
-                .labelDescriptors(Collections.singletonList(descriptor))
-                .diffMetrics(metrics)
-                .similarityScore(100d)
-                .filteredOut(false)
-                .build();
+        if (CollectionUtils.isEmpty(diff.getLabelIds())) {
+            String effectiveStatus = StringUtils.hasText(status) ? status : BlockLabelConstants.STATUS_NO_RULES;
+            context.labelCounts.merge(effectiveStatus, 1, Integer::sum);
+            context.lineCounts.merge(effectiveStatus, deltaLines, Integer::sum);
+        } else {
+            for (String label : diff.getLabelIds()) {
+                context.labelCounts.merge(label, 1, Integer::sum);
+                context.lineCounts.merge(label, deltaLines, Integer::sum);
+            }
+        }
+    }
+
+    private boolean isSynthetic(BlockDiff diff) {
+        if (diff == null) {
+            return false;
+        }
+        Map<String, Object> metadata = diff.getMetadata();
+        if (CollectionUtils.isEmpty(metadata)) {
+            return false;
+        }
+        if (metadata.containsKey("syntheticType") || metadata.containsKey("synthetic_type")) {
+            return true;
+        }
+        Object synthetic = metadata.get("synthetic");
+        if (synthetic instanceof Boolean) {
+            return (Boolean) synthetic;
+        }
+        if (synthetic instanceof Number) {
+            return ((Number) synthetic).intValue() != 0;
+        }
+        if (synthetic instanceof String) {
+            String normalized = ((String) synthetic).trim();
+            if (normalized.isEmpty()) {
+                return false;
+            }
+            return "true".equalsIgnoreCase(normalized)
+                    || "yes".equalsIgnoreCase(normalized)
+                    || "on".equalsIgnoreCase(normalized)
+                    || "1".equals(normalized);
+        }
+        return false;
     }
 
     private List<String> splitIntoLines(String content) {
@@ -626,6 +685,7 @@ public class ProjectDiffGenerator implements ApplicationListener<ScanCompletedEv
         private double similaritySum;
         private int unlabeled;
         private int changedLineTotal;
+        private int syntheticBlocks;
         private boolean gitMetadataAttached;
 
         private BlockProcessingContext(String projectCode,

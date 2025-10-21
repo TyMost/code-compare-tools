@@ -55,7 +55,7 @@
         v-model="internalCategories"
         multiple
         collapse-tags
-        placeholder="排除分类"
+        placeholder="筛选分类"
         @change="emitFilterChange"
       >
         <el-option
@@ -190,5 +190,4 @@ export default {
   border-radius: 50%;
 }
 </style>
-
 

@@ -49,5 +49,7 @@ init_repo() {
 
 init_repo "${ROOT_DIR}/projectA" "main" "feature/order-sync"
 init_repo "${ROOT_DIR}/projectB" "release/gauss" ""
+init_repo "${ROOT_DIR}/projectA-git" "main" "feature/git-demo"
+init_repo "${ROOT_DIR}/projectB-git" "main" "release/git-demo"
 
 echo "全部示例仓库初始化完成。"

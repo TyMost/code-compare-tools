@@ -6,10 +6,12 @@ import com.example.codecompare.rebuild.rules.RuleDefinition;
 import com.example.codecompare.rebuild.rules.RuleHit;
 import org.springframework.util.StringUtils;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 
 /**
- * 相似度规则：依据差异指标的相似度百分比打标签。
+ * 相似度规则：依据 diff 模块给出的相似度指标判定标签。
  */
 public class SimilarityRuleStrategy extends AbstractRuleStrategy {
 
@@ -19,7 +21,13 @@ public class SimilarityRuleStrategy extends AbstractRuleStrategy {
 
     @Override
     public Optional<RuleHit> evaluate(BlockDiff diff, RuleDefinition definition) {
-        DiffMetrics metrics = diff != null && diff.getDiffMetrics() != null ? diff.getDiffMetrics() : DiffMetrics.empty();
+        if (diff == null) {
+            return empty();
+        }
+        DiffMetrics metrics = diff.getDiffMetrics();
+        if (metrics == null) {
+            metrics = DiffMetrics.empty();
+        }
         double similarity = metrics.getSimilarityPercent();
         double threshold = definition.getDoubleParam("threshold", 50D);
         String comparison = definition.getStringParam("comparison", "below").toLowerCase();
@@ -52,7 +60,6 @@ public class SimilarityRuleStrategy extends AbstractRuleStrategy {
                 matched = similarity > minThreshold && similarity < maxThreshold;
                 break;
             default:
-                // 未知比较符，默认按 "below" 处理
                 matched = similarity < threshold;
         }
 
@@ -62,7 +69,12 @@ public class SimilarityRuleStrategy extends AbstractRuleStrategy {
         if (!StringUtils.hasText(labelId)) {
             labelId = definition.getId();
         }
-        RuleHit hit = toHit(definition, labelId, labelName);
+        Map<String, Object> metadata = new LinkedHashMap<String, Object>();
+        metadata.put("similarityPercent", similarity);
+        metadata.put("changedLines", metrics.getChangedLines());
+        metadata.put("existsInSource", metrics.isExistsInA());
+        metadata.put("existsInTarget", metrics.isExistsInB());
+        RuleHit hit = toHit(definition, labelId, labelName, metadata);
         return Optional.of(hit);
     }
 }

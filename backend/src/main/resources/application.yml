@@ -1,4 +1,4 @@
-server:
+﻿server:
   port: 8081
 
 spring:
@@ -14,23 +14,31 @@ management:
 logging:
   level:
     com.example.codecompare.rebuild.agent.CodeBlockMigrationService: DEBUG
+    com.example.codecompare.rebuild.scanning: DEBUG
+    com.example.codecompare.rebuild.scanning.JGitChangeScanner: DEBUG
+    com.example.codecompare.rebuild.diff: DEBUG
 
 migration:
   project:
     sources:
-      - code: projectA
-        path: ../examples/projectA
+      - code: projectA-git
+        path: D:\\Coding\\code-compare-tools\\examples\\projectA-git
     targets:
-      - code: projectB
-        path: ../examples/projectB
-  git:
-    enabled: false
-    base-branch: main
-    compare-branch: feature/migration
+      - code: projectB-git
+        path: D:\\Coding\\code-compare-tools\\examples\\projectB-git
   rules:
     path: classpath:config/rules.yaml
     reload-on-change: false
   scan:
+    diffEngine: git
+    git-base-ref-source: refs/heads/main
+    git-target-ref-source: refs/heads/feature/git-demo
+    git-base-ref-target: refs/heads/main
+    git-target-ref-target: refs/heads/release/git-demo
+    include-working-tree: true
+    since-last-summary: false
+    # Set false to skip the demo full scan when the service boots.
+    auto-scan-on-startup: false
     ignore-globs:
       - ".git/**"
       - ".idea/**"
@@ -54,3 +62,4 @@ migration:
     pretty-print: true
   agent:
     annotation-template: classpath:migration/annotation-template.yml
+

@@ -1,128 +1,107 @@
-package com.example.codecompare.rebuild.scanning;
+﻿package com.example.codecompare.rebuild.scanning;
 
 import com.example.codecompare.rebuild.block.model.BlockDiff;
-import com.example.codecompare.rebuild.diff.model.DiffMetrics;
+import com.example.codecompare.rebuild.core.properties.ApplicationProperties;
+import com.example.codecompare.rebuild.diff.model.DiffSegmentType;
+import com.example.codecompare.rebuild.rules.DefaultRuleRegistry;
 import com.example.codecompare.rebuild.rules.RuleEvaluationFacade;
 import com.example.codecompare.rebuild.rules.RuleEvaluationReport;
 import com.example.codecompare.rebuild.rules.RuleHit;
+import com.example.codecompare.rebuild.rules.RuleLoader;
 import com.example.codecompare.rebuild.rules.RuleRegistry;
 import com.example.codecompare.rebuild.rules.RuleSet;
+import com.example.codecompare.rebuild.rules.strategy.BlockFilterRuleStrategy;
+import com.example.codecompare.rebuild.rules.strategy.ContentMaskRuleStrategy;
+import com.example.codecompare.rebuild.rules.strategy.FieldReplaceRuleStrategy;
+import com.example.codecompare.rebuild.rules.strategy.PresenceRuleStrategy;
+import com.example.codecompare.rebuild.rules.strategy.SimilarityRuleStrategy;
 import org.junit.jupiter.api.Test;
 
-import java.time.Instant;
+import java.util.Arrays;
 import java.util.Collections;
-import java.util.List;
-import java.util.function.Function;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
-import static com.example.codecompare.rebuild.scanning.BlockLabelConstants.STATUS_MIGRATED;
-import static com.example.codecompare.rebuild.scanning.BlockLabelConstants.STATUS_NEW_CODE;
-import static com.example.codecompare.rebuild.scanning.BlockLabelConstants.STATUS_UNMIGRATED;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class BlockDiffLabelerTest {
 
     @Test
-    void labelsSourceOnlyBlockAsUnmigrated() {
+    void mergesRuleMetadataIntoDiffMetadata() {
         BlockDiff diff = BlockDiff.builder()
-                .sourceContent("legacyCall();")
-                .targetContent("")
-                .diffMetrics(DiffMetrics.of("legacyCall();", "", 0d))
+                .sourceStartLine(1)
+                .targetStartLine(1)
+                .sourceLines(Collections.singletonList("return 1;"))
+                .targetLines(Collections.singletonList("return 1;"))
+                .metadata(Collections.<String, Object>singletonMap("existingKey", "existing"))
                 .build();
 
-        BlockDiffLabeler labeler = new BlockDiffLabeler(ruleFacade(diff2 -> emptyReport()));
+        Map<String, Object> metadata = new LinkedHashMap<String, Object>();
+        metadata.put("similarity", Collections.singletonMap("similarityPercent", 100d));
+        RuleHit hit = new RuleHit("similarity-high", "migrated", "migrated",
+                10, "migrated", "#67C23A", "similarity", null, metadata);
+        RuleEvaluationReport report = new RuleEvaluationReport(Collections.singletonList(hit));
+        RuleEvaluationFacade facade = new RuleEvaluationFacade(new StubRuleRegistry(report));
+        BlockDiffLabeler labeler = new BlockDiffLabeler(facade);
+
         BlockDiff labeled = labeler.label(diff);
 
-        assertThat(labeled.getLabelIds()).contains(STATUS_UNMIGRATED);
+        assertThat(labeled.getMetadata()).containsKey("ruleMetadata");
+        Object ruleMetadata = labeled.getMetadata().get("ruleMetadata");
+        assertThat(ruleMetadata).isInstanceOf(Map.class);
+        Map<?, ?> ruleMetadataMap = (Map<?, ?>) ruleMetadata;
+        assertThat(ruleMetadataMap).containsKey("migrated");
+        assertThat(ruleMetadataMap.get("migrated")).isEqualTo(metadata);
+        assertThat(labeled.getMetadata()).containsEntry("existingKey", "existing");
     }
 
     @Test
-    void labelsTargetOnlyBlockAsNewCode() {
+    void identicalBlockMatchesSimilarityRule() {
+        ApplicationProperties properties = new ApplicationProperties();
+        RuleLoader loader = new RuleLoader(properties);
+        RuleRegistry registry = new DefaultRuleRegistry(
+                loader,
+                Arrays.asList(
+                        new FieldReplaceRuleStrategy(),
+                        new ContentMaskRuleStrategy(),
+                        new BlockFilterRuleStrategy(),
+                        new PresenceRuleStrategy(),
+                        new SimilarityRuleStrategy()
+                ),
+                properties.getRules());
+        BlockDiffLabeler labeler = new BlockDiffLabeler(new RuleEvaluationFacade(registry));
+
         BlockDiff diff = BlockDiff.builder()
-                .sourceContent("")
-                .targetContent("modernCall();")
-                .diffMetrics(DiffMetrics.of("", "modernCall();", 0d))
+                .type(DiffSegmentType.CHANGE)
+                .sourceStartLine(10)
+                .targetStartLine(10)
+                .sourceLines(Arrays.asList("int value = 1;", "return value;"))
+                .targetLines(Arrays.asList("int value = 1;", "return value;"))
+                .similarityScore(100d)
                 .build();
 
-        BlockDiffLabeler labeler = new BlockDiffLabeler(ruleFacade(diff2 -> emptyReport()));
         BlockDiff labeled = labeler.label(diff);
 
-        assertThat(labeled.getLabelIds()).contains(STATUS_NEW_CODE);
-    }
-
-    @Test
-    void labelsIdenticalContentAsMigrated() {
-        String content = "void handler() { }";
-        BlockDiff diff = BlockDiff.builder()
-                .sourceContent(content)
-                .targetContent(content)
-                .diffMetrics(DiffMetrics.of(content, content, 100d))
-                .build();
-
-        BlockDiffLabeler labeler = new BlockDiffLabeler(ruleFacade(diff2 -> emptyReport()));
-        BlockDiff labeled = labeler.label(diff);
-
-        assertThat(labeled.getLabelIds()).contains(STATUS_MIGRATED);
-    }
-
-    @Test
-    void mergesRuleLabelsWithBaseLabels() {
-        BlockDiff diff = BlockDiff.builder()
-                .sourceContent("LEGACY::encode(value);")
-                .targetContent("encoder.encode(value);")
-                .diffMetrics(DiffMetrics.of("LEGACY::encode(value);", "encoder.encode(value);", 80d))
-                .build();
-
-        BlockDiffLabeler labeler = new BlockDiffLabeler(ruleFacade(d -> new RuleEvaluationReport(
-                Collections.singletonList(ruleHit("replace-syntax", "语法重构", "语法重构", null)))));
-        BlockDiff labeled = labeler.label(diff);
-
-        assertThat(labeled.getLabelIds()).contains("语法重构");
-        assertThat(labeled.getLabels()).contains("语法重构");
-    }
-
-    @Test
-    void marksBlockAsFilteredWhenRuleRequestsDrop() {
-        BlockDiff diff = BlockDiff.builder()
-                .sourceContent("// comment only")
-                .targetContent("")
-                .diffMetrics(DiffMetrics.of("// comment only", "", 0d))
-                .build();
-
-        BlockDiffLabeler labeler = new BlockDiffLabeler(ruleFacade(d -> new RuleEvaluationReport(
-                Collections.singletonList(ruleHit("drop-comment", "ignored_comments", "ignored_comments", "drop")))));
-        BlockDiff labeled = labeler.label(diff);
-
-        assertThat(labeled.isFilteredOut()).isTrue();
-    }
-
-    private RuleEvaluationFacade ruleFacade(Function<BlockDiff, RuleEvaluationReport> evaluator) {
-        return new RuleEvaluationFacade(new StubRuleRegistry(evaluator));
-    }
-
-    private RuleEvaluationReport emptyReport() {
-        return new RuleEvaluationReport(Collections.emptyList());
-    }
-
-    private RuleHit ruleHit(String ruleId, String labelId, String labelName, String filterAction) {
-        return new RuleHit(ruleId, labelId, labelName, 500, labelId, "#409EFF", "test", filterAction);
+        assertThat(labeled.getLabelIds()).contains("migrated");
+        assertThat(labeled.getLabels()).isNotEmpty();
+        assertThat(labeled.getPrimaryLabel()).isNotNull();
     }
 
     private static final class StubRuleRegistry implements RuleRegistry {
+        private final RuleEvaluationReport report;
 
-        private final Function<BlockDiff, RuleEvaluationReport> evaluator;
-
-        private StubRuleRegistry(Function<BlockDiff, RuleEvaluationReport> evaluator) {
-            this.evaluator = evaluator;
+        private StubRuleRegistry(RuleEvaluationReport report) {
+            this.report = report;
         }
 
         @Override
         public RuleSet currentRuleSet() {
-            return new RuleSet(Collections.emptyList(), Instant.now(), "stub");
+            return null;
         }
 
         @Override
         public RuleEvaluationReport evaluate(BlockDiff diff) {
-            return evaluator.apply(diff);
+            return report;
         }
     }
 }

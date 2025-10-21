@@ -16,8 +16,8 @@ import java.util.Locale;
 @Component
 public class AnnotationRenderingService {
 
-    private static final String DEFAULT_ANNOTATION_START = "/** 迁移生成的代码片段开�?(blockId=%s) */";
-    private static final String DEFAULT_ANNOTATION_END = "/** 迁移生成的代码片段结�?*/";
+    private static final String DEFAULT_ANNOTATION_START = "/** 迁移生成的代码片段开始（blockId=%s） */";
+    private static final String DEFAULT_ANNOTATION_END = "/** 迁移生成的代码片段结束 */";
 
     private final AnnotationTemplateProvider annotationTemplateProvider;
 
@@ -122,4 +122,3 @@ public class AnnotationRenderingService {
         return false;
     }
 }
-

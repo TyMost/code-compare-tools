@@ -6,8 +6,8 @@
 - 预留 Agent 协同能力，但在当前内网场景下以本地两步式迁移为主，确保离线可运行。
 
 ## 架构概览
-- **后端**：Spring Boot + Java 17，模块划分为 `core`、`scanning`、`diff`、`block`、`stats`、`repository`、`agent`、`api` 等。
-- **前端**：Vue 2 + Element UI，内置仪表盘、代码块列表、差异详情三大界面。
+- **后端**：Spring Boot 2.7.x + Java 8（JDK 1.8），模块划分为 `core`、`scanning`、`diff`、`block`、`stats`、`repository`、`agent`、`api` 等。
+- **前端**：Vue 2.7 + Element UI 2.15，配合 Vue CLI 5、Vuex、Vue Router，结合 diff2html、monaco-editor、echarts 完成仪表盘、代码块列表、差异详情三大界面。
 - **示例仓库**：`examples/projectA` 与 `examples/projectB` 演示典型迁移流程。
 - **通信协议**：REST API（以 `/api/v1/migration/**` 为主），前后端统一 `success/message/data` 响应格式。
 
@@ -36,7 +36,7 @@
 5. **批量操作占位**：`POST /api/v1/migration/code-blocks/generate|apply|ignore` —— 后端仅记录请求并返回提示，方便后续接入真实业务。
 
 ## 部署与运行
-- **后端**：JDK 17，推荐使用 Maven 3.8+；运行 `mvn spring-boot:run` 或 IDE 内启动 `RebuildCodeCompareApplication`。
+- **后端**：JDK 8（推荐 1.8u321+），推荐使用 Maven 3.8+；运行 `mvn spring-boot:run` 或 IDE 内启动 `RebuildCodeCompareApplication`。
 - **前端**：Node.js 16+（推荐 18），`npm install && npm run serve`；默认代理后端 `http://localhost:8081`。
 - **配置**：`migration.project-roots` 指定需要扫描的目录；`migration.storage.location` 控制持久化路径；`migration.rules.path` 指定本地 Agent 使用的规则文件。
 - **示例流程**：

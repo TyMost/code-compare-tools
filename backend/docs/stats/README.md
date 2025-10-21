@@ -20,7 +20,7 @@
 
 ## 指标聚合流程
 1. `MetricsAggregator#categoryMetrics` 分页读取 diff 快照，累积标签数量、行数、代码块总数。  
-2. 若快照缺失行数，会根据 `BlockLabelConstants.STATUS_MIGRATED` 补齐。  
+2. 若快照缺失行数，会根据 `BlockLabelConstants.STATUS_NO_RULES` 补齐。  
 3. `loadCodeBlocks` 组合 `DiffSnapshotDocument` 与 `BlockDecisionRecord`，按文件、类别过滤并排序。  
 4. 结果经 `StatsViewMapper` 转换后由 API 返回前端。
 

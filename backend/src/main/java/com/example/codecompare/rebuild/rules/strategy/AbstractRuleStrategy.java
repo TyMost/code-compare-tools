@@ -4,6 +4,8 @@ import com.example.codecompare.rebuild.rules.RuleDefinition;
 import com.example.codecompare.rebuild.rules.RuleHit;
 import org.springframework.util.StringUtils;
 
+import java.util.Collections;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -23,6 +25,13 @@ public abstract class AbstractRuleStrategy implements RuleStrategy {
     }
 
     protected RuleHit toHit(RuleDefinition definition, String labelId, String labelName) {
+        return toHit(definition, labelId, labelName, Collections.<String, Object>emptyMap());
+    }
+
+    protected RuleHit toHit(RuleDefinition definition,
+                            String labelId,
+                            String labelName,
+                            Map<String, Object> metadata) {
         String resolvedLabel = StringUtils.hasText(labelId) ? labelId : definition.getResolvedLabelId();
         String resolvedName = StringUtils.hasText(labelName) ? labelName : definition.getResolvedDisplayName();
         int priority = definition.getPriority();
@@ -30,7 +39,7 @@ public abstract class AbstractRuleStrategy implements RuleStrategy {
         String color = definition.getResolvedColor();
         String category = definition.getResolvedCategory();
         String filterAction = definition.getResolvedFilterAction();
-        return new RuleHit(definition.getId(), resolvedLabel, resolvedName, priority, statusKey, color, category, filterAction);
+        return new RuleHit(definition.getId(), resolvedLabel, resolvedName, priority, statusKey, color, category, filterAction, metadata);
     }
 
     protected Optional<RuleHit> empty() {

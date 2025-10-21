@@ -3,70 +3,105 @@ package com.example.codecompare.rebuild.scanning.compare;
 import com.example.codecompare.rebuild.api.dto.DualIncrementalComparisonBlockView;
 import com.example.codecompare.rebuild.api.dto.DualIncrementalComparisonView;
 import com.example.codecompare.rebuild.api.dto.IncrementalDiffFileDetailView;
-import com.example.codecompare.rebuild.api.dto.IncrementalDiffGitDiffView;
-import com.example.codecompare.rebuild.api.dto.IncrementalDiffGitHunkView;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
-import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
 /**
- * Calculates similarity metrics between two incremental Git diffs.
+ * Calculates similarity metrics between two incremental Git diffs by comparing classified change blocks.
  */
 @Component
 public class DualIncrementalComparisonCalculator {
 
-    public Optional<DualIncrementalComparisonView> compare(IncrementalDiffFileDetailView source,
-                                                           IncrementalDiffFileDetailView target) {
-        IncrementalDiffGitDiffView sourceDiff = source == null ? null : source.getGitDiff();
-        IncrementalDiffGitDiffView targetDiff = target == null ? null : target.getGitDiff();
-        List<HunkSummary> sourceHunks = summarise(sourceDiff);
-        List<HunkSummary> targetHunks = summarise(targetDiff);
-        if (sourceHunks.isEmpty() && targetHunks.isEmpty()) {
+    private final IncrementalChangeExtractor extractor;
+
+    public DualIncrementalComparisonCalculator(IncrementalChangeExtractor extractor) {
+        this.extractor = extractor;
+    }
+
+    public Optional<DualIncrementalComparisonView> compare(IncrementalDiffFileDetailView sourceDetail,
+                                                           IncrementalDiffFileDetailView targetDetail) {
+        IncrementalChange sourceChange = extractor.extract(sourceDetail);
+        IncrementalChange targetChange = extractor.extract(targetDetail);
+
+        if (sourceChange.isEmpty() && targetChange.isEmpty()) {
             return Optional.empty();
         }
 
+        List<IncrementalCodeBlock> sourceBlocks = sourceChange.getBlocks();
+        List<IncrementalCodeBlock> targetBlocks = targetChange.getBlocks();
+        boolean[] targetMatched = new boolean[targetBlocks.size()];
+
         int sameLineCount = Math.min(
-                sourceDiff == null ? 0 : sourceDiff.getSameLineCount(),
-                targetDiff == null ? 0 : targetDiff.getSameLineCount());
+                sourceChange.getGitStats().getSameLineCount(),
+                targetChange.getGitStats().getSameLineCount());
+
+        double similarityAccumulator = sameLineCount;
+        int totalChangedLines = sameLineCount;
+        int blockIndex = 1;
 
         List<DualIncrementalComparisonBlockView> blocks = new ArrayList<DualIncrementalComparisonBlockView>();
-        double similarityNumerator = sameLineCount;
-        int totalChangedLines = sameLineCount;
 
-        int paired = Math.min(sourceHunks.size(), targetHunks.size());
-        for (int index = 0; index < paired; index++) {
-            BlockComputation computation = computeBlock(index, sourceHunks.get(index), targetHunks.get(index));
-            blocks.add(computation.getView());
-            similarityNumerator += computation.getSimilarityContribution();
-            totalChangedLines += computation.getReferenceLineCount();
-        }
-
-        if (sourceHunks.size() > paired) {
-            for (int index = paired; index < sourceHunks.size(); index++) {
-                BlockComputation computation = computeUnmatchedBlock(index, sourceHunks.get(index), true);
-                blocks.add(computation.getView());
-                totalChangedLines += computation.getReferenceLineCount();
+        for (int s = 0; s < sourceBlocks.size(); s++) {
+            IncrementalCodeBlock sourceBlock = sourceBlocks.get(s);
+            MatchResult match = findBestMatch(sourceBlock, targetBlocks, targetMatched);
+            if (match.getTargetIndex() >= 0) {
+                targetMatched[match.getTargetIndex()] = true;
+                IncrementalCodeBlock targetBlock = targetBlocks.get(match.getTargetIndex());
+                int referenceLines = Math.max(sourceBlock.getChangedLines(), targetBlock.getChangedLines());
+                if (referenceLines <= 0) {
+                    referenceLines = 1;
+                }
+                similarityAccumulator += (match.getSimilarity() / 100d) * referenceLines;
+                totalChangedLines += referenceLines;
+                blocks.add(buildBlockView(blockIndex++,
+                        sourceBlock,
+                        targetBlock,
+                        referenceLines,
+                        match.getSimilarity(),
+                        "MATCHED",
+                        sourceChange.getChangeType(),
+                        targetChange.getChangeType()));
+            } else {
+                int referenceLines = Math.max(1, sourceBlock.getChangedLines());
+                totalChangedLines += referenceLines;
+                blocks.add(buildBlockView(blockIndex++,
+                        sourceBlock,
+                        null,
+                        referenceLines,
+                        0d,
+                        "SOURCE_ONLY",
+                        sourceChange.getChangeType(),
+                        IncrementalChangeType.NONE));
             }
         }
-        if (targetHunks.size() > paired) {
-            for (int index = paired; index < targetHunks.size(); index++) {
-                BlockComputation computation = computeUnmatchedBlock(index, targetHunks.get(index), false);
-                blocks.add(computation.getView());
-                totalChangedLines += computation.getReferenceLineCount();
+
+        for (int t = 0; t < targetBlocks.size(); t++) {
+            if (targetMatched[t]) {
+                continue;
             }
+            IncrementalCodeBlock targetBlock = targetBlocks.get(t);
+            int referenceLines = Math.max(1, targetBlock.getChangedLines());
+            totalChangedLines += referenceLines;
+            blocks.add(buildBlockView(blockIndex++,
+                    null,
+                    targetBlock,
+                    referenceLines,
+                    0d,
+                    "TARGET_ONLY",
+                    IncrementalChangeType.NONE,
+                    targetChange.getChangeType()));
         }
 
-        double similarityPercent = totalChangedLines > 0
-                ? (similarityNumerator / totalChangedLines) * 100d
+        double fileSimilarityPercent = totalChangedLines > 0
+                ? (similarityAccumulator / (double) totalChangedLines) * 100d
                 : 0d;
 
         DualIncrementalComparisonView view = DualIncrementalComparisonView.builder()
-                .fileSimilarity(round(similarityPercent))
+                .fileSimilarity(round(fileSimilarityPercent))
                 .sameLineCount(sameLineCount)
                 .totalChangedLines(totalChangedLines)
                 .blocks(blocks)
@@ -74,67 +109,83 @@ public class DualIncrementalComparisonCalculator {
         return Optional.of(view);
     }
 
-    private List<HunkSummary> summarise(IncrementalDiffGitDiffView diff) {
-        if (diff == null || CollectionUtils.isEmpty(diff.getHunks())) {
-            return Collections.emptyList();
-        }
-        List<HunkSummary> summaries = new ArrayList<HunkSummary>();
-        for (IncrementalDiffGitHunkView hunk : diff.getHunks()) {
-            if (hunk == null || CollectionUtils.isEmpty(hunk.getLines())) {
-                continue;
-            }
-            List<String> added = new ArrayList<String>();
-            List<String> removed = new ArrayList<String>();
-            int changed = 0;
-            for (String line : hunk.getLines()) {
-                if (!StringUtils.hasText(line)) {
-                    continue;
-                }
-                char marker = line.charAt(0);
-                String payload = line.substring(1);
-                if (marker == '+') {
-                    added.add(payload);
-                    changed++;
-                } else if (marker == '-') {
-                    removed.add(payload);
-                    changed++;
-                }
-            }
-            if (!added.isEmpty() || !removed.isEmpty()) {
-                summaries.add(new HunkSummary(added, removed, changed));
-            }
-        }
-        return summaries;
-    }
+    private DualIncrementalComparisonBlockView buildBlockView(int index,
+                                                              IncrementalCodeBlock sourceBlock,
+                                                              IncrementalCodeBlock targetBlock,
+                                                              int referenceLines,
+                                                              double similarity,
+                                                              String matchStatus,
+                                                              IncrementalChangeType sourceChangeType,
+                                                              IncrementalChangeType targetChangeType) {
+        String blockType = resolveBlockType(sourceBlock, targetBlock);
+        String changeType = formatChangeType(sourceChangeType, targetChangeType);
 
-    private BlockComputation computeBlock(int index, HunkSummary source, HunkSummary target) {
-        int referenceLines = Math.max(Math.max(source.getChangedLineCount(), target.getChangedLineCount()), 1);
-        double similarity = computeLineSimilarity(source.getAddedLines(), target.getAddedLines());
-        double contribution = (similarity / 100d) * referenceLines;
-        DualIncrementalComparisonBlockView view = DualIncrementalComparisonBlockView.builder()
-                .index(index + 1)
-                .similarity(round(similarity))
-                .sourceChangedLines(source.getChangedLineCount())
-                .targetChangedLines(target.getChangedLineCount())
-                .referenceLineCount(referenceLines)
-                .build();
-        return new BlockComputation(view, contribution, referenceLines);
-    }
-
-    private BlockComputation computeUnmatchedBlock(int index, HunkSummary summary, boolean sourceOnly) {
-        int referenceLines = Math.max(summary.getChangedLineCount(), 1);
         DualIncrementalComparisonBlockView.Builder builder = DualIncrementalComparisonBlockView.builder()
-                .index(index + 1)
-                .similarity(0d)
-                .sourceChangedLines(sourceOnly ? summary.getChangedLineCount() : 0)
-                .targetChangedLines(sourceOnly ? 0 : summary.getChangedLineCount())
-                .referenceLineCount(referenceLines);
-        if (sourceOnly) {
+                .index(index)
+                .similarity(round(similarity))
+                .referenceLineCount(referenceLines)
+                .blockType(blockType)
+                .changeType(changeType)
+                .matchStatus(matchStatus);
+
+        if (sourceBlock != null) {
+            builder.sourceChangedLines(sourceBlock.getChangedLines());
+        }
+        if (targetBlock != null) {
+            builder.targetChangedLines(targetBlock.getChangedLines());
+        }
+        if ("SOURCE_ONLY".equals(matchStatus)) {
             builder.sourceOnly(true);
-        } else {
+        }
+        if ("TARGET_ONLY".equals(matchStatus)) {
             builder.targetOnly(true);
         }
-        return new BlockComputation(builder.build(), 0d, referenceLines);
+        return builder.build();
+    }
+
+    private String resolveBlockType(IncrementalCodeBlock sourceBlock, IncrementalCodeBlock targetBlock) {
+        if (sourceBlock != null) {
+            return sourceBlock.getBlockType().name();
+        }
+        if (targetBlock != null) {
+            return targetBlock.getBlockType().name();
+        }
+        return IncrementalBlockType.UNKNOWN.name();
+    }
+
+    private String formatChangeType(IncrementalChangeType sourceType, IncrementalChangeType targetType) {
+        String left = sourceType == null ? IncrementalChangeType.NONE.name() : sourceType.name();
+        String right = targetType == null ? IncrementalChangeType.NONE.name() : targetType.name();
+        return left + "/" + right;
+    }
+
+    private MatchResult findBestMatch(IncrementalCodeBlock sourceBlock,
+                                      List<IncrementalCodeBlock> targetBlocks,
+                                      boolean[] matched) {
+        double bestSimilarity = -1d;
+        int bestIndex = -1;
+        boolean bestSameType = false;
+
+        for (int i = 0; i < targetBlocks.size(); i++) {
+            if (matched[i]) {
+                continue;
+            }
+            IncrementalCodeBlock candidate = targetBlocks.get(i);
+            double similarity = computeLineSimilarity(sourceBlock.getLines(), candidate.getLines());
+            boolean sameType = sourceBlock.getBlockType() == candidate.getBlockType();
+            if (similarity > bestSimilarity) {
+                bestSimilarity = similarity;
+                bestIndex = i;
+                bestSameType = sameType;
+            } else if (similarity == bestSimilarity && sameType && !bestSameType) {
+                bestIndex = i;
+                bestSameType = true;
+            }
+        }
+        if (bestSimilarity < 0d) {
+            bestSimilarity = 0d;
+        }
+        return new MatchResult(bestIndex, bestSimilarity);
     }
 
     private double computeLineSimilarity(List<String> left, List<String> right) {
@@ -144,20 +195,9 @@ public class DualIncrementalComparisonCalculator {
         if (CollectionUtils.isEmpty(left) || CollectionUtils.isEmpty(right)) {
             return 0d;
         }
-        int lcs = longestCommonSubsequence(left, right);
-        int denominator = Math.max(left.size(), right.size());
-        if (denominator <= 0) {
-            return 0d;
-        }
-        return ((double) lcs / (double) denominator) * 100d;
-    }
-
-    private int longestCommonSubsequence(List<String> left, List<String> right) {
-        int m = left.size();
-        int n = right.size();
-        int[][] dp = new int[m + 1][n + 1];
-        for (int i = 1; i <= m; i++) {
-            for (int j = 1; j <= n; j++) {
+        int[][] dp = new int[left.size() + 1][right.size() + 1];
+        for (int i = 1; i <= left.size(); i++) {
+            for (int j = 1; j <= right.size(); j++) {
                 if (equalsIgnoreWhitespace(left.get(i - 1), right.get(j - 1))) {
                     dp[i][j] = dp[i - 1][j - 1] + 1;
                 } else {
@@ -165,7 +205,12 @@ public class DualIncrementalComparisonCalculator {
                 }
             }
         }
-        return dp[m][n];
+        int lcs = dp[left.size()][right.size()];
+        int denominator = Math.max(left.size(), right.size());
+        if (denominator <= 0) {
+            return 0d;
+        }
+        return ((double) lcs / (double) denominator) * 100d;
     }
 
     private boolean equalsIgnoreWhitespace(String left, String right) {
@@ -178,54 +223,21 @@ public class DualIncrementalComparisonCalculator {
         return Math.round(value * 10d) / 10d;
     }
 
-    private static final class HunkSummary {
-        private final List<String> addedLines;
-        private final List<String> removedLines;
-        private final int changedLineCount;
+    private static final class MatchResult {
+        private final int targetIndex;
+        private final double similarity;
 
-        private HunkSummary(List<String> addedLines, List<String> removedLines, int changedLineCount) {
-            this.addedLines = addedLines == null ? Collections.<String>emptyList() : addedLines;
-            this.removedLines = removedLines == null ? Collections.<String>emptyList() : removedLines;
-            this.changedLineCount = Math.max(0, changedLineCount);
+        private MatchResult(int targetIndex, double similarity) {
+            this.targetIndex = targetIndex;
+            this.similarity = similarity;
         }
 
-        private List<String> getAddedLines() {
-            return addedLines;
+        private int getTargetIndex() {
+            return targetIndex;
         }
 
-        @SuppressWarnings("unused")
-        private List<String> getRemovedLines() {
-            return removedLines;
-        }
-
-        private int getChangedLineCount() {
-            return changedLineCount;
-        }
-    }
-
-    private static final class BlockComputation {
-        private final DualIncrementalComparisonBlockView view;
-        private final double similarityContribution;
-        private final int referenceLineCount;
-
-        private BlockComputation(DualIncrementalComparisonBlockView view,
-                                 double similarityContribution,
-                                 int referenceLineCount) {
-            this.view = view;
-            this.similarityContribution = similarityContribution;
-            this.referenceLineCount = referenceLineCount;
-        }
-
-        private DualIncrementalComparisonBlockView getView() {
-            return view;
-        }
-
-        private double getSimilarityContribution() {
-            return similarityContribution;
-        }
-
-        private int getReferenceLineCount() {
-            return referenceLineCount;
+        private double getSimilarity() {
+            return similarity;
         }
     }
 }

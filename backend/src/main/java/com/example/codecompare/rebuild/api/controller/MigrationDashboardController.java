@@ -7,6 +7,7 @@ import com.example.codecompare.rebuild.api.response.ApiResponseFactory;
 import com.example.codecompare.rebuild.core.config.ConfigurationReloadReport;
 import com.example.codecompare.rebuild.core.config.ConfigurationRefreshCoordinator;
 import com.example.codecompare.rebuild.scanning.FileScanService;
+import com.example.codecompare.rebuild.scanning.ScanProperties;
 import com.example.codecompare.rebuild.scanning.ScanSummary;
 import com.example.codecompare.rebuild.stats.DashboardSummaryService;
 import org.slf4j.Logger;
@@ -30,15 +31,18 @@ public class MigrationDashboardController {
     private final MigrationViewMapper viewMapper;
     private final FileScanService fileScanService;
     private final ConfigurationRefreshCoordinator configurationRefreshCoordinator;
+    private final ScanProperties scanProperties;
 
     public MigrationDashboardController(DashboardSummaryService dashboardSummaryService,
                                         MigrationViewMapper viewMapper,
                                         FileScanService fileScanService,
-                                        ConfigurationRefreshCoordinator configurationRefreshCoordinator) {
+                                        ConfigurationRefreshCoordinator configurationRefreshCoordinator,
+                                        ScanProperties scanProperties) {
         this.dashboardSummaryService = dashboardSummaryService;
         this.viewMapper = viewMapper;
         this.fileScanService = fileScanService;
         this.configurationRefreshCoordinator = configurationRefreshCoordinator;
+        this.scanProperties = scanProperties;
     }
 
     @GetMapping("/overview")
@@ -48,20 +52,40 @@ public class MigrationDashboardController {
         ConfigurationReloadReport configReport = configurationRefreshCoordinator.reloadAll();
         String effectiveProject = StringUtils.hasText(projectKey) ? projectKey : null;
         if (refresh) {
-            log.info("收到重新加载请求，先清理后扫描，projectKey={}", effectiveProject);
-            ScanSummary summary = fileScanService.reload(effectiveProject);
-            String followUpProject = StringUtils.hasText(effectiveProject) ? effectiveProject : summary.getProjectCode();
-            MigrationOverviewView view = viewMapper.toOverviewView(
+            boolean gitEnabled = scanProperties != null
+                    && "git".equalsIgnoreCase(StringUtils.trimWhitespace(scanProperties.getDiffEngine()));
+            ScanSummary summary;
+            String message;
+            if (gitEnabled) {
+                log.info("Received dashboard refresh request. Executing Git incremental scan, project={}", effectiveProject);
+                summary = fileScanService.scanIncremental(effectiveProject);
+                if (summary == null) {
+                    log.warn("Git incremental scan produced no summary, falling back to full rescan. project={}", effectiveProject);
+                    summary = fileScanService.reload(effectiveProject);
+                    message = "Git 增量扫描失败，已回退到全量重新扫描";
+                } else {
+                    message = "Git 增量重新扫描完成";
+                }
+            } else {
+                log.info("Received dashboard refresh request. Executing full rescan, project={}", effectiveProject);
+                summary = fileScanService.reload(effectiveProject);
+                message = "全量重新扫描完成";
+            }
+            String followUpProject = summary == null
+                    ? effectiveProject
+                    : (StringUtils.hasText(effectiveProject) ? effectiveProject : summary.getProjectCode());
+            MigrationOverviewView refreshed = viewMapper.toOverviewView(
                     dashboardSummaryService.overview(followUpProject),
                     configReport);
-            return ApiResponseFactory.ok("重新加载成功", view);
+            return ApiResponseFactory.ok(message, refreshed);
         }
+
         MigrationOverviewView view = viewMapper.toOverviewView(
                 dashboardSummaryService.overview(effectiveProject),
                 configReport);
         if (needsAutoRefresh(view)) {
-            log.info("仪表盘数据为空，请执行重新加载以生成最新内容，projectKey={}", effectiveProject);
-            return ApiResponseFactory.ok("暂无数据，请执行重新加载以生成最新内容", view);
+            log.info("Dashboard overview is empty, prompting client to trigger a refresh. project={}", effectiveProject);
+            return ApiResponseFactory.ok("当前没有可用数据，请执行重新加载以生成最新内容", view);
         }
         return ApiResponseFactory.ok(view);
     }

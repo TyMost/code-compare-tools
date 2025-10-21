@@ -3,6 +3,8 @@ package com.example.codecompare.rebuild.repository.filesystem;
 import com.example.codecompare.rebuild.repository.AgentSuggestionRepository;
 import com.example.codecompare.rebuild.repository.config.StorageProperties;
 import com.example.codecompare.rebuild.repository.model.AgentSuggestionRecord;
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -36,7 +38,7 @@ public class FileSystemAgentSuggestionRepository implements AgentSuggestionRepos
 
     public FileSystemAgentSuggestionRepository(StorageProperties properties, ObjectMapper objectMapper) {
         this.properties = properties;
-        this.objectMapper = objectMapper;
+        this.objectMapper = configureMapper(objectMapper);
     }
 
     @Override
@@ -236,7 +238,14 @@ public class FileSystemAgentSuggestionRepository implements AgentSuggestionRepos
         }
     }
 
+    @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY)
+    @JsonIgnoreProperties(ignoreUnknown = true)
     private static final class StoredSuggestions {
         private List<AgentSuggestionRecord> records = new ArrayList<>();
+    }
+
+    private ObjectMapper configureMapper(ObjectMapper mapper) {
+        ObjectMapper configured = mapper == null ? new ObjectMapper() : mapper.copy();
+        return configured.findAndRegisterModules();
     }
 }

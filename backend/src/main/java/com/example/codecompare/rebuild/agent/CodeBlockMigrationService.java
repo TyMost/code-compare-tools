@@ -437,16 +437,18 @@ public class CodeBlockMigrationService {
     }
 
     private int determineReferenceStartLine(BlockDiff diff, CodeBlockDetailDTO detail) {
-        if (diff != null && diff.getTargetStartLine() > 0) {
-            return diff.getTargetStartLine();
+        int candidate = diff != null ? diff.getTargetStartLine() : -1;
+        if (detail != null) {
+            int detailStart = detail.getStartLine();
+            if (detailStart > 0 && (candidate <= 0 || detailStart < candidate)) {
+                candidate = detailStart;
+            }
+            int detailEnd = detail.getEndLine();
+            if (detailEnd > 0 && (candidate <= 0 || detailEnd < candidate)) {
+                candidate = detailEnd;
+            }
         }
-        if (detail != null && detail.getStartLine() > 0) {
-            return detail.getStartLine();
-        }
-        if (detail != null && detail.getEndLine() > 0) {
-            return detail.getEndLine();
-        }
-        return -1;
+        return candidate > 0 ? candidate : -1;
     }
 
     private void logInsertionResult(MigrationCandidate candidate, InsertionResult result) {

@@ -10,7 +10,9 @@ import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 行级差异片段模型，兼容历史 BlockDiff 命名，增加行号、操作类型等字段。
@@ -33,6 +35,7 @@ public final class BlockDiff {
     private final List<String> targetLines;
     private final String sourceContent;
     private final String targetContent;
+    private final Map<String, Object> metadata;
 
     private BlockDiff(Builder builder) {
         this.type = builder.type == null ? DiffSegmentType.CHANGE : builder.type;
@@ -55,6 +58,7 @@ public final class BlockDiff {
         this.diffMetrics = builder.diffMetrics != null
                 ? builder.diffMetrics
                 : DiffMetrics.of(sourceContent, targetContent, builder.similarityScore);
+        this.metadata = toUnmodifiableMap(builder.metadata);
     }
 
     private static String determineContent(String provided, List<String> lines) {
@@ -108,7 +112,8 @@ public final class BlockDiff {
                 .sourceLines(diff.sourceLines)
                 .targetLines(diff.targetLines)
                 .sourceContent(diff.sourceContent)
-                .targetContent(diff.targetContent);
+                .targetContent(diff.targetContent)
+                .metadata(diff.metadata);
     }
 
     public DiffSegmentType getType() {
@@ -175,6 +180,10 @@ public final class BlockDiff {
         return targetContent;
     }
 
+    public Map<String, Object> getMetadata() {
+        return metadata;
+    }
+
     public BlockDiff withLabels(List<String> newLabelIds, List<String> newLabels) {
         return BlockDiff.from(this)
                 .labelIds(newLabelIds)
@@ -201,6 +210,7 @@ public final class BlockDiff {
         private List<String> targetLines;
         private String sourceContent;
         private String targetContent;
+        private Map<String, Object> metadata = Collections.emptyMap();
 
         public Builder() {
         }
@@ -292,6 +302,15 @@ public final class BlockDiff {
             return this;
         }
 
+        public Builder metadata(@JsonProperty("metadata") Map<String, ?> metadata) {
+            if (metadata == null || metadata.isEmpty()) {
+                this.metadata = Collections.emptyMap();
+            } else {
+                this.metadata = new LinkedHashMap<>(metadata);
+            }
+            return this;
+        }
+
         public BlockDiff build() {
             return new BlockDiff(this);
         }
@@ -357,5 +376,12 @@ public final class BlockDiff {
         public String getFilterAction() {
             return filterAction;
         }
+    }
+
+    private Map<String, Object> toUnmodifiableMap(Map<String, Object> metadata) {
+        if (metadata == null || metadata.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return Collections.unmodifiableMap(new LinkedHashMap<>(metadata));
     }
 }

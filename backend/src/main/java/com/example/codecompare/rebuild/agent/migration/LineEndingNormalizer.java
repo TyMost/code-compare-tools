@@ -42,9 +42,6 @@ public final class LineEndingNormalizer {
         } catch (IOException ex) {
             throw new IllegalStateException("无法拆分迁移代码片段", ex);
         }
-        if (content.endsWith(System.lineSeparator())) {
-            lines.add("");
-        }
         return lines;
     }
 
@@ -59,4 +56,3 @@ public final class LineEndingNormalizer {
         return joined;
     }
 }
-

@@ -27,7 +27,6 @@ replay_pid*
 # 忽略生成的文件
 dist/
 build/
-config/
 # 忽略 Node.js 运行时文件
 node_modules/
 # 忽略 IDE 和编辑器生成的文件

@@ -1,0 +1,136 @@
+rules:
+#  - id: drop-line-comments
+#    type: block-filter
+#    displayName: "Ignore // comments"
+#    params:
+#      pattern: "(?s)^\\s*(//.*?(?:\\R|$)\\s*)+$"
+#      filterAction: drop
+#      applyTo: either
+  - id: drop-block-comments
+    type: block-filter
+    displayName: "Ignore /* */ comments"
+    params:
+      pattern: "(?s)^\\s*/\\*.*?\\*/\\s*$"
+      ignoreSynthetic: true
+      filterAction: drop
+      applyTo: either
+      priority: 1000
+  - id: drop-blank-blocks
+    type: block-filter
+    displayName: "Ignore blank blocks"
+    params:
+      filterAction: drop
+      ignoreSynthetic: true
+      applyTo: both
+      priority: 1000
+  - id: drop-orphan-import-source
+    type: block-filter
+    displayName: "Ignore removed import"
+    params:
+      pattern: "(?s)^\\s*import\\b.*$"
+      filterAction: drop
+      ignoreSynthetic: true
+      applyTo: source
+      priority: 995
+  - id: drop-orphan-import-target
+    type: block-filter
+    displayName: "Ignore added import"
+    params:
+      pattern: "(?s)^\\s*import\\b.*$"
+      filterAction: drop
+      ignoreSynthetic: true
+      applyTo: target
+      priority: 995
+  - id: replace-syntax
+    type: field-replace
+    displayName: "语法重构"
+    params:
+      from: "LEGACY::"
+      to: "encoder.encode"
+      label: "语法重构"
+      minCount: 1
+      priority: 900
+      color: "#E6A23C"
+  - id: replace-decode
+    type: field-replace
+    displayName: "分片解码重构"
+    params:
+      from: "token.substring"
+      to: "encoder.decodeTenant"
+      label: "分片解码重构"
+      minCount: 1
+      priority: 850
+      color: "#67C23A"
+  - id: feature-flag-refactor
+    type: field-replace
+    displayName: "特性开关重构"
+    params:
+      from: "setNewCheckout"
+      to: "override"
+      label: "特性开关重构"
+      minCount: 1
+      priority: 1
+      color: "#409EFF"
+  - id: channel-mapping-refactor
+    type: field-replace
+    displayName: "渠道映射重构"
+    params:
+      from: "new HashMap"
+      to: "Map.copyOf"
+      label: "渠道映射重构"
+      minCount: 1
+      priority: 1
+      color: "#AF52DE"
+  - id: similarity-low
+    type: similarity
+    displayName: "未迁移"
+    params:
+      threshold: 30
+      comparison: below
+      label: "未迁移"
+      priority: 1
+      statusKey: "unmigrated
+      color: "#F56C6C"
+  - id: similarity-partial
+    type: similarity
+    displayName: "适配迁移"
+    params:
+      minThreshold: 30
+      maxThreshold: 100
+      comparison: between
+      label: "适配迁移"
+      priority: 1
+      statusKey: "adapt_migration"
+      color: "#409EFF"
+  - id: presence-target-only
+    type: presence
+    displayName: "目标新增适配"
+    params:
+      requireExistsInA: false
+      requireExistsInB: true
+      matchTypes:
+        - INSERT
+      label: "目标新增适配"
+      priority: 2
+      statusKey: "new_adapt_migration"
+      color: "#409EFF"
+  - id: similarity-high
+    type: similarity
+    displayName: "已迁移"
+    params:
+      threshold: 100
+      comparison: at-least
+      label: "已迁移"
+      priority: 1100
+      statusKey: "migrated"
+      color: "#67C23A"
+#  - id: fallback-other
+#    type: similarity
+#    displayName: "其他"
+#    params:
+#      threshold: 0
+#      comparison: at-least
+#      label: "其他"
+#      priority: 50
+#      statusKey: "other"
+#      color: "#909399"

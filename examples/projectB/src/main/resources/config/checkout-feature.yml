@@ -1,0 +1,9 @@
+/** 迁移生成的代码片段开始 (blockId=c557752f-d02d-4435-8e64-a92ba2f2fc60) 1234 */
+newCheckout:
+  enabled: false
+  region: legacy
+/** 迁移生成的代码片段结束 */
+
+checkout:
+  override: true
+  region: modern

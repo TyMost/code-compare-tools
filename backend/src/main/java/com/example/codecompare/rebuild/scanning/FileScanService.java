@@ -1,6 +1,7 @@
 package com.example.codecompare.rebuild.scanning;
 
 import com.example.codecompare.rebuild.core.support.ProjectRootRegistry;
+import com.example.codecompare.rebuild.core.support.ProjectRootRegistry.ProjectRootDescriptor;
 import com.example.codecompare.rebuild.repository.model.FileRecord;
 import com.example.codecompare.rebuild.repository.support.StoragePurgeService;
 import org.slf4j.Logger;
@@ -17,7 +18,7 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * 扫描入口服务，负责协调全量扫描与增量扫描。
+ * Coordinates full and incremental project scans and publishes their results.
  */
 public class FileScanService {
 
@@ -51,28 +52,28 @@ public class FileScanService {
     }
 
     /**
-     * 执行全量扫描，并触发扫描完成事件。
+     * Executes a full rescan and persists the result.
      */
     public ScanSummary scanAll(ProjectScanRequest request) {
         ProjectScanRequest normalized = normalize(request);
-        log.info("触发全量扫描，项目：{}，根目录：{}", normalized.getProjectCode(), normalized.getProjectRoots());
+        log.info("Starting full scan, project={}, roots={}",
+                normalized.getProjectCode(), normalized.getProjectRoots());
         return executeFullScan(normalized, true);
     }
 
     /**
-     * 清空项目的历史数据后重新执行一次全量扫描。
+     * Clears stored information for the given project and performs a fresh full scan.
      */
     public ScanSummary reload(ProjectScanRequest request) {
         ProjectScanRequest normalized = normalize(request);
-        log.info("执行重新加载流程，先清理后扫描，项目：{}", normalized.getProjectCode());
+        log.info("Reload requested, refreshing project {}", normalized.getProjectCode());
         storagePurgeService.purgeAll(normalized.getProjectCode());
         return executeFullScan(normalized, true);
     }
 
     public ScanSummary reload(String projectCode) {
         if (StringUtils.hasText(projectCode)) {
-            ProjectRootRegistry.ProjectRootDescriptor descriptor =
-                    projectRootRegistry.findByCode(projectCode).orElse(null);
+            ProjectRootDescriptor descriptor = projectRootRegistry.findByCode(projectCode).orElse(null);
             if (descriptor != null) {
                 ProjectScanRequest request = ProjectScanRequest.builder()
                         .projectCode(projectCode)
@@ -80,31 +81,72 @@ public class FileScanService {
                         .build();
                 return reload(request);
             }
-            log.warn("未找到项目编码对应的根目录，使用默认配置重新加载：{}", projectCode);
+            log.warn("Project code {} not found in registry, falling back to defaults.", projectCode);
         }
         return reload((ProjectScanRequest) null);
     }
 
     /**
-     * 预留的增量扫描逻辑，当前回退至全量摘要。
+     * Performs an incremental scan for the given project, defaulting to the shared registry roots
+     * when no explicit descriptor can be resolved.
+     */
+    public ScanSummary scanIncremental(String projectCode) {
+        if (StringUtils.hasText(projectCode)) {
+            ProjectRootDescriptor descriptor = projectRootRegistry.findByCode(projectCode).orElse(null);
+            if (descriptor != null) {
+                ProjectScanRequest request = ProjectScanRequest.builder()
+                        .projectCode(projectCode)
+                        .addRoot(descriptor.getPath())
+                        .build();
+                return scanIncremental(request);
+            }
+            log.warn("Project code {} not found in registry, falling back to defaults.", projectCode);
+        }
+        return scanIncremental((ProjectScanRequest) null);
+    }
+
+    /**
+     * Performs an incremental scan based on Git changes. Falls back to the latest full summary if no
+     * delta is produced.
      */
     public ScanSummary scanIncremental(ProjectScanRequest request) {
         ProjectScanRequest normalized = normalize(request);
-        log.info("尝试执行增量扫描，项目：{}", normalized.getProjectCode());
+        log.info("Starting incremental scan, project={}", normalized.getProjectCode());
+
+        if ("git".equalsIgnoreCase(scanProperties.getDiffEngine())) {
+            log.debug("Purging stored artifacts before Git incremental scan, project={}", normalized.getProjectCode());
+            storagePurgeService.purgeAll(normalized.getProjectCode());
+        }
+
         GitIncrementalResult incremental = gitChangeScanner.scanIncremental(normalized);
         if (incremental == null || incremental.isEmpty()) {
-            log.info("增量扫描返回空结果，使用最近一次全量扫描摘要。");
+            log.info("Incremental scan returned empty result, using latest stored summary.");
             return scanResultRepository.findLatestSummary(normalized.getProjectCode())
                     .orElse(ScanSummary.empty(normalized.getProjectCode(), clock.instant()));
         }
+
         List<FileRecord> records = incremental.getRecords();
+        log.debug("Incremental scan produced {} records and {} git diff files for project {}",
+                records == null ? 0 : records.size(),
+                incremental.getGitDiffFiles() == null ? 0 : incremental.getGitDiffFiles().size(),
+                normalized.getProjectCode());
+
         if (!CollectionUtils.isEmpty(records)) {
             scanResultRepository.saveAll(records);
         }
+
         ScanSummary summary = incremental.getSummary()
                 .orElse(ScanSummary.empty(normalized.getProjectCode(), clock.instant()));
+        log.debug("Incremental summary: projectCode={}, baseCommits={}, latestCommits={}",
+                summary.getProjectCode(), summary.getBaseCommits(), summary.getLatestCommits());
+
         scanResultRepository.saveSummary(summary);
-        eventPublisher.publishEvent(new ScanCompletedEvent(this, summary, records, false));
+        eventPublisher.publishEvent(new ScanCompletedEvent(
+                this,
+                summary,
+                records,
+                incremental.getGitDiffFiles(),
+                false));
         return summary;
     }
 
@@ -114,10 +156,14 @@ public class FileScanService {
                 this,
                 result.getSummary(),
                 result.getRecords(),
+                Collections.emptyList(),
                 fullRescan));
-        log.info("全量扫描完成，耗时：{} ms，文件数：{}", result.getSummary().getDuration() == null ? 0
-                : result.getSummary().getDuration().toMillis(),
-                result.getSummary().getFilesScanned());
+
+        long durationMs = result.getSummary().getDuration() == null
+                ? 0L
+                : result.getSummary().getDuration().toMillis();
+        log.info("Full scan completed in {} ms, files scanned={}",
+                durationMs, result.getSummary().getFilesScanned());
         return result.getSummary();
     }
 
@@ -129,15 +175,17 @@ public class FileScanService {
                 ? toAbsolutePaths(request.getProjectRoots())
                 : resolveDefaultRoots();
         if (CollectionUtils.isEmpty(roots)) {
-            throw new IllegalStateException("扫描根目录不能为空，请通过配置或请求明确指定");
+            throw new IllegalStateException("Project scan roots must not be empty.");
         }
         List<String> ignoreGlobs = request == null ? Collections.emptyList() : request.getIgnoreGlobs();
+        Instant requestedAt = request == null ? Instant.now(clock) : request.getRequestedAt();
+
         return ProjectScanRequest.builder()
                 .projectCode(projectCode)
                 .roots(roots)
                 .ignoreGlobs(ignoreGlobs)
                 .skipHidden(request == null || request.isSkipHidden())
-                .requestedAt(request == null ? Instant.now(clock) : request.getRequestedAt())
+                .requestedAt(requestedAt)
                 .build();
     }
 
@@ -155,10 +203,11 @@ public class FileScanService {
     private List<Path> resolveDefaultRoots() {
         List<Path> resolved = projectRootRegistry.getRoots();
         if (CollectionUtils.isEmpty(resolved)) {
-            throw new IllegalStateException("扫描根目录不能为空，请通过配置或请求明确指定");
+            throw new IllegalStateException("Project scan roots must not be empty.");
         }
         return new ArrayList<>(resolved);
     }
+
     private List<Path> toAbsolutePaths(List<Path> paths) {
         List<Path> result = new ArrayList<>(paths.size());
         for (Path path : paths) {

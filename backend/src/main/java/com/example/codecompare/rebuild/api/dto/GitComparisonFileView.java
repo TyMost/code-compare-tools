@@ -14,11 +14,13 @@ public final class GitComparisonFileView {
     private final String filePath;
     private final IncrementalDiffFileDetailView source;
     private final IncrementalDiffFileDetailView target;
+    private final DualIncrementalComparisonView dualComparison;
 
     private GitComparisonFileView(Builder builder) {
         this.filePath = builder.filePath;
         this.source = builder.source;
         this.target = builder.target;
+        this.dualComparison = builder.dualComparison;
     }
 
     public static Builder builder() {
@@ -37,12 +39,17 @@ public final class GitComparisonFileView {
         return target;
     }
 
+    public DualIncrementalComparisonView getDualComparison() {
+        return dualComparison;
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     @JsonPOJOBuilder(withPrefix = "")
     public static final class Builder {
         private String filePath;
         private IncrementalDiffFileDetailView source;
         private IncrementalDiffFileDetailView target;
+        private DualIncrementalComparisonView dualComparison;
 
         public Builder filePath(@JsonProperty("filePath") String filePath) {
             this.filePath = filePath;
@@ -59,9 +66,13 @@ public final class GitComparisonFileView {
             return this;
         }
 
+        public Builder dualComparison(@JsonProperty("dualComparison") DualIncrementalComparisonView dualComparison) {
+            this.dualComparison = dualComparison;
+            return this;
+        }
+
         public GitComparisonFileView build() {
             return new GitComparisonFileView(this);
         }
     }
 }
-

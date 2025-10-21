@@ -2,6 +2,7 @@ package com.example.codecompare.rebuild.diff;
 
 import com.example.codecompare.rebuild.block.model.CodeSnapshot;
 import com.example.codecompare.rebuild.diff.config.DiffConfigurationProperties;
+import com.example.codecompare.rebuild.diff.git.GitDiffEngine;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -12,7 +13,8 @@ class DiffResultAssemblerSimilarityTest {
     private DiffService createService() {
         DiffConfigurationProperties properties = new DiffConfigurationProperties();
         properties.setMaxFileSize(1024 * 1024);
-        return new DiffService(new LineDiffEngine(), new DiffResultAssembler(), DiffContentMasker.noop(), properties);
+        return new DiffService(new LineDiffEngine(), new DiffResultAssembler(), DiffContentMasker.noop(),
+                properties, new GitDiffEngine());
     }
 
     private double similarityScore(String source, String target) {

@@ -20,6 +20,9 @@ public class GitComparisonBatchConfig {
     @JsonProperty("targets")
     private List<ProjectEntry> targets = new ArrayList<>();
 
+    @JsonProperty("pairs")
+    private List<PairEntry> pairs = new ArrayList<>();
+
     @JsonProperty("git-base-ref-source")
     private String gitBaseRefSource;
 
@@ -46,6 +49,14 @@ public class GitComparisonBatchConfig {
 
     public void setTargets(List<ProjectEntry> targets) {
         this.targets = targets == null ? new ArrayList<>() : new ArrayList<>(targets);
+    }
+
+    public List<PairEntry> getPairs() {
+        return pairs == null ? Collections.emptyList() : Collections.unmodifiableList(pairs);
+    }
+
+    public void setPairs(List<PairEntry> pairs) {
+        this.pairs = pairs == null ? new ArrayList<>() : new ArrayList<>(pairs);
     }
 
     public String getGitBaseRefSource() {
@@ -128,5 +139,72 @@ public class GitComparisonBatchConfig {
             return Objects.hash(code, path);
         }
     }
-}
 
+    public static final class PairEntry {
+        @JsonProperty("source")
+        private ProjectEntry source;
+
+        @JsonProperty("target")
+        private ProjectEntry target;
+
+        @JsonProperty("git-base-ref-source")
+        private String gitBaseRefSource;
+
+        @JsonProperty("git-target-ref-source")
+        private String gitTargetRefSource;
+
+        @JsonProperty("git-base-ref-target")
+        private String gitBaseRefTarget;
+
+        @JsonProperty("git-target-ref-target")
+        private String gitTargetRefTarget;
+
+        public ProjectEntry getSource() {
+            return source;
+        }
+
+        public void setSource(ProjectEntry source) {
+            this.source = source;
+        }
+
+        public ProjectEntry getTarget() {
+            return target;
+        }
+
+        public void setTarget(ProjectEntry target) {
+            this.target = target;
+        }
+
+        public String getGitBaseRefSource() {
+            return gitBaseRefSource;
+        }
+
+        public void setGitBaseRefSource(String gitBaseRefSource) {
+            this.gitBaseRefSource = gitBaseRefSource;
+        }
+
+        public String getGitTargetRefSource() {
+            return gitTargetRefSource;
+        }
+
+        public void setGitTargetRefSource(String gitTargetRefSource) {
+            this.gitTargetRefSource = gitTargetRefSource;
+        }
+
+        public String getGitBaseRefTarget() {
+            return gitBaseRefTarget;
+        }
+
+        public void setGitBaseRefTarget(String gitBaseRefTarget) {
+            this.gitBaseRefTarget = gitBaseRefTarget;
+        }
+
+        public String getGitTargetRefTarget() {
+            return gitTargetRefTarget;
+        }
+
+        public void setGitTargetRefTarget(String gitTargetRefTarget) {
+            this.gitTargetRefTarget = gitTargetRefTarget;
+        }
+    }
+}

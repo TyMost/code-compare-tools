@@ -1,6 +1,7 @@
 package com.example.codecompare.rebuild.scanning;
 
 import com.example.codecompare.rebuild.repository.model.FileRecord;
+import com.example.codecompare.rebuild.scanning.git.GitDiffFile;
 import org.springframework.context.ApplicationEvent;
 import org.springframework.util.CollectionUtils;
 
@@ -14,17 +15,22 @@ public class ScanCompletedEvent extends ApplicationEvent {
 
     private final ScanSummary summary;
     private final List<FileRecord> changedRecords;
+    private final List<GitDiffFile> gitDiffFiles;
     private final boolean fullRescan;
 
     public ScanCompletedEvent(Object source,
                               ScanSummary summary,
                               List<FileRecord> changedRecords,
+                              List<GitDiffFile> gitDiffFiles,
                               boolean fullRescan) {
         super(source);
         this.summary = summary;
         this.changedRecords = CollectionUtils.isEmpty(changedRecords)
                 ? Collections.emptyList()
                 : Collections.unmodifiableList(changedRecords);
+        this.gitDiffFiles = CollectionUtils.isEmpty(gitDiffFiles)
+                ? Collections.emptyList()
+                : Collections.unmodifiableList(gitDiffFiles);
         this.fullRescan = fullRescan;
     }
 
@@ -34,6 +40,10 @@ public class ScanCompletedEvent extends ApplicationEvent {
 
     public List<FileRecord> getChangedRecords() {
         return changedRecords;
+    }
+
+    public List<GitDiffFile> getGitDiffFiles() {
+        return gitDiffFiles;
     }
 
     public boolean isFullRescan() {
