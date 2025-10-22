@@ -5,6 +5,10 @@ import com.example.codecompare.rebuild.repository.model.BlockDecisionSnapshot;
 import com.example.codecompare.rebuild.stats.CodeBlockDetailDTO;
 import com.example.codecompare.rebuild.block.model.BlockDiff;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 /**
  * Represents a code block that is ready to be migrated into the target file.
  */
@@ -16,19 +20,29 @@ public final class MigrationCandidate {
     private final BlockDecisionRecord record;
     private final String annotatedCode;
     private final BlockDiff diff;
+    private final List<String> expectedOriginal;
+    private final String templateKey;
 
     public MigrationCandidate(String blockId,
                               CodeBlockDetailDTO detail,
                               BlockDecisionSnapshot snapshot,
                               BlockDecisionRecord record,
                               String annotatedCode,
-                              BlockDiff diff) {
+                              BlockDiff diff,
+                              List<String> expectedOriginal,
+                              String templateKey) {
         this.blockId = blockId;
         this.detail = detail;
         this.snapshot = snapshot;
         this.record = record;
         this.annotatedCode = annotatedCode;
         this.diff = diff;
+        if (expectedOriginal == null || expectedOriginal.isEmpty()) {
+            this.expectedOriginal = Collections.emptyList();
+        } else {
+            this.expectedOriginal = Collections.unmodifiableList(new ArrayList<String>(expectedOriginal));
+        }
+        this.templateKey = templateKey == null ? "migrate_adapt" : templateKey;
     }
 
     public String getBlockId() {
@@ -53,6 +67,14 @@ public final class MigrationCandidate {
 
     public BlockDiff getDiff() {
         return diff;
+    }
+
+    public List<String> getExpectedOriginal() {
+        return expectedOriginal;
+    }
+
+    public String getTemplateKey() {
+        return templateKey;
     }
 
     public String getTargetProjectCode() {

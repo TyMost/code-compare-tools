@@ -50,9 +50,21 @@ public class DiffSynchronizationService {
                                                      BlockDecisionSnapshot snapshot) {
         try {
             Map<String, BlockDiff> recalculated = recalculateDiffsForFile(snapshot);
-            return applyDiffReplacements(snapshot, recalculated);
+            return applyDiffReplacements(snapshot, recalculated, false);
         } catch (IOException ex) {
             throw new IllegalStateException("刷新文件 diff 失败 file=" + detail.getFilePath(), ex);
+        }
+    }
+
+    public BlockDecisionSnapshot refreshSnapshotForMigration(BlockDecisionSnapshot snapshot) {
+        if (snapshot == null) {
+            return null;
+        }
+        try {
+            Map<String, BlockDiff> recalculated = recalculateDiffsForFile(snapshot);
+            return applyDiffReplacements(snapshot, recalculated, true);
+        } catch (IOException ex) {
+            throw new IllegalStateException("刷新文件 diff 失败 file=" + snapshot.getFilePath(), ex);
         }
     }
 
@@ -89,7 +101,8 @@ public class DiffSynchronizationService {
     }
 
     private BlockDecisionSnapshot applyDiffReplacements(BlockDecisionSnapshot snapshot,
-                                                        Map<String, BlockDiff> replacements) {
+                                                        Map<String, BlockDiff> replacements,
+                                                        boolean preserveTimestamp) {
         if (snapshot == null || replacements == null || replacements.isEmpty()) {
             return snapshot;
         }
@@ -107,7 +120,9 @@ public class DiffSynchronizationService {
         if (!changed) {
             return snapshot;
         }
-        Instant now = Instant.now(clock);
+        Instant analyzedAt = preserveTimestamp && snapshot.getAnalyzedAt() != null
+                ? snapshot.getAnalyzedAt()
+                : Instant.now(clock);
         return BlockDecisionSnapshot.builder()
                 .id(snapshot.getId())
                 .comparisonId(snapshot.getComparisonId())
@@ -115,7 +130,7 @@ public class DiffSynchronizationService {
                 .sourceProjectCode(snapshot.getSourceProjectCode())
                 .targetProjectCode(snapshot.getTargetProjectCode())
                 .records(updatedRecords)
-                .analyzedAt(now)
+                .analyzedAt(analyzedAt)
                 .build();
     }
 

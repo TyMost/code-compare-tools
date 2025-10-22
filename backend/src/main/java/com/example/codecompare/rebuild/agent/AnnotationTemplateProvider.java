@@ -8,6 +8,9 @@ import org.springframework.core.io.ResourceLoader;
 import org.springframework.util.StringUtils;
 
 import java.time.Instant;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicReference;
@@ -56,6 +59,31 @@ public class AnnotationTemplateProvider {
     }
 
     /**
+     * Render using the template mapped to the provided key. Falls back to the default template when
+     * the key is blank or unmapped.
+     */
+    public AnnotationRenderResult renderWithKey(String blockId,
+                                                String sourceCode,
+                                                String originalCode,
+                                                String templateKey) {
+        TemplateSet current = cache.get();
+        String effectiveKey = StringUtils.hasText(templateKey) ? templateKey : "default";
+        String template = current.getTemplate(effectiveKey);
+        if (!StringUtils.hasText(template)) {
+            effectiveKey = "default";
+            template = current.getDefaultTemplate();
+        }
+        String safeBlockId = blockId == null ? "" : blockId;
+        String safeSource = normalizeContent(sourceCode);
+        String safeOriginal = normalizeContent(originalCode);
+        String rendered = template.replace("${blockId}", safeBlockId)
+                .replace("${code}", safeSource)
+                .replace("${original}", safeOriginal);
+        return new AnnotationRenderResult(rendered, template, effectiveKey,
+                current.getLoadedAt(), current.getSourceDescription());
+    }
+
+    /**
      * Reloads template content from the configured resource.
      *
      * @return report describing reload outcome
@@ -85,10 +113,11 @@ public class AnnotationTemplateProvider {
     }
 
     private TemplateSet loadTemplates(String location) {
-        String defaultTpl = DEFAULT_TEMPLATE_FALLBACK;
-        String adaptTpl = null;
+        Map<String, String> rawTemplates = new LinkedHashMap<String, String>();
+        rawTemplates.put("default", DEFAULT_TEMPLATE_FALLBACK);
         boolean loadSuccessful = false;
         boolean fallbackUsed = false;
+        boolean defaultConfigured = false;
         String description = "annotation-template:default";
         if (StringUtils.hasText(location)) {
             Resource resource = resourceLoader.getResource(location);
@@ -99,18 +128,25 @@ public class AnnotationTemplateProvider {
                     factory.setResources(resource);
                     Properties props = factory.getObject();
                     if (props != null) {
-                        String candidateDefault = props.getProperty("annotation.default");
-                        if (StringUtils.hasText(candidateDefault)) {
-                            defaultTpl = candidateDefault;
-                        } else {
-                            fallbackUsed = true;
+                        for (String key : props.stringPropertyNames()) {
+                            if (!StringUtils.hasText(key) || !key.startsWith("annotation.")) {
+                                continue;
+                            }
+                            String suffix = key.substring("annotation.".length());
+                            if (!StringUtils.hasText(suffix)) {
+                                continue;
+                            }
+                            String value = props.getProperty(key);
+                            if (!StringUtils.hasText(value)) {
+                                continue;
+                            }
+                            rawTemplates.put(suffix, value);
+                            if ("default".equals(suffix)) {
+                                defaultConfigured = true;
+                            }
                         }
-                        adaptTpl = props.getProperty("annotation.migrate_adapt");
                         loadSuccessful = true;
-                        log.info("已加载注解模板配置，location={}，包含默认模板={}，适配模板={}",
-                                location,
-                                StringUtils.hasText(defaultTpl),
-                                StringUtils.hasText(adaptTpl));
+                        log.info("已加载注解模板配置，location={}，共有 {} 个模板", location, Integer.valueOf(rawTemplates.size()));
                     } else {
                         fallbackUsed = true;
                         log.warn("注解模板配置文件为空，location={}，使用默认模板", location);
@@ -129,14 +165,28 @@ public class AnnotationTemplateProvider {
             log.info("未配置迁移注解模板路径，使用内置默认模板");
         }
 
-        String normalizedDefault = normalizeTemplate(defaultTpl);
-        if (!StringUtils.hasText(normalizedDefault)) {
-            normalizedDefault = DEFAULT_TEMPLATE_FALLBACK;
-            fallbackUsed = true;
+        Map<String, String> normalizedTemplates = new LinkedHashMap<String, String>();
+        for (Map.Entry<String, String> entry : rawTemplates.entrySet()) {
+            String normalized = normalizeTemplate(entry.getValue());
+            if (!StringUtils.hasText(normalized)) {
+                if ("default".equals(entry.getKey())) {
+                    fallbackUsed = true;
+                }
+                continue;
+            }
+            normalizedTemplates.put(entry.getKey(), normalized);
         }
-        String normalizedAdapt = normalizeTemplate(adaptTpl);
+        if (!normalizedTemplates.containsKey("default")) {
+            normalizedTemplates.put("default", DEFAULT_TEMPLATE_FALLBACK);
+            if (!defaultConfigured) {
+                fallbackUsed = true;
+            }
+        }
+        String normalizedDefault = normalizedTemplates.get("default");
+        String normalizedAdapt = normalizedTemplates.get("migrate_adapt");
 
         return new TemplateSet(
+                normalizedTemplates,
                 normalizedDefault,
                 normalizedAdapt,
                 Instant.now(),
@@ -169,6 +219,7 @@ public class AnnotationTemplateProvider {
     }
 
     private static final class TemplateSet {
+        private final Map<String, String> templates;
         private final String defaultTemplate;
         private final String adaptTemplate;
         private final Instant loadedAt;
@@ -176,16 +227,24 @@ public class AnnotationTemplateProvider {
         private final boolean fallbackUsed;
         private final boolean loadSuccessful;
 
-        private TemplateSet(String defaultTemplate,
+        private TemplateSet(Map<String, String> templates,
+                            String defaultTemplate,
                             String adaptTemplate,
                             Instant loadedAt,
                             String sourceDescription,
                             boolean fallbackUsed,
                             boolean loadSuccessful) {
-            this.defaultTemplate = defaultTemplate == null
-                    ? DEFAULT_TEMPLATE_FALLBACK
-                    : defaultTemplate;
-            this.adaptTemplate = adaptTemplate;
+            Map<String, String> safeTemplates = new LinkedHashMap<String, String>();
+            if (templates != null && !templates.isEmpty()) {
+                safeTemplates.putAll(templates);
+            }
+            String resolvedDefault = defaultTemplate == null ? DEFAULT_TEMPLATE_FALLBACK : defaultTemplate;
+            safeTemplates.put("default", resolvedDefault);
+            this.templates = Collections.unmodifiableMap(safeTemplates);
+            this.defaultTemplate = resolvedDefault;
+            this.adaptTemplate = StringUtils.hasText(adaptTemplate)
+                    ? adaptTemplate
+                    : safeTemplates.get("migrate_adapt");
             this.loadedAt = loadedAt == null ? Instant.now() : loadedAt;
             this.sourceDescription = sourceDescription;
             this.fallbackUsed = fallbackUsed;
@@ -199,8 +258,7 @@ public class AnnotationTemplateProvider {
             if (other == null) {
                 return false;
             }
-            return Objects.equals(defaultTemplate, other.defaultTemplate)
-                    && Objects.equals(adaptTemplate, other.adaptTemplate);
+            return Objects.equals(templates, other.templates);
         }
 
         private String getDefaultTemplate() {
@@ -225,6 +283,17 @@ public class AnnotationTemplateProvider {
 
         private boolean isLoadSuccessful() {
             return loadSuccessful;
+        }
+
+        private String getTemplate(String key) {
+            if (!StringUtils.hasText(key)) {
+                return templates.get("default");
+            }
+            String template = templates.get(key);
+            if (!StringUtils.hasText(template)) {
+                return templates.get("default");
+            }
+            return template;
         }
     }
 

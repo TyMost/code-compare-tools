@@ -273,8 +273,16 @@ public class CodeBlockMigrationService {
                     failures.add(blockId + ": 缺少差异片段信息");
                     continue;
                 }
-                String annotated = annotationRenderingService.normalizeLineEndings(detail.getNewCode());
-                candidates.add(new MigrationCandidate(blockId, detail, snapshot, existingRecord, annotated, existingRecord.getDiff()));
+                BlockDiff diff = existingRecord.getDiff();
+                RenderedAnnotation rendered = annotationRenderingService.renderWithTemplateKey(detail, diff, blockId, "migrate_adapt");
+                String annotated = rendered != null
+                        ? annotationRenderingService.normalizeLineEndings(rendered.getContent())
+                        : annotationRenderingService.normalizeLineEndings(detail.getNewCode());
+                List<String> expectedOriginal = diff != null && !CollectionUtils.isEmpty(diff.getTargetLines())
+                        ? diff.getTargetLines()
+                        : Collections.<String>emptyList();
+                String templateKey = rendered != null ? rendered.getTemplateKey() : "migrate_adapt";
+                candidates.add(new MigrationCandidate(blockId, detail, snapshot, existingRecord, annotated, diff, expectedOriginal, templateKey));
             } catch (Exception ex) {
                 log.warn("应用迁移代码失败 blockId={}", blockId, ex);
                 failures.add(blockId + ": " + ex.getMessage());
@@ -294,7 +302,11 @@ public class CodeBlockMigrationService {
             ReentrantLock fileLock = acquireFileLock(lockKey);
             fileLock.lock();
             try {
-                BlockDecisionSnapshot workingSnapshot = primary.getSnapshot();
+                BlockDecisionSnapshot workingSnapshot = diffSynchronizationService.refreshSnapshotForMigration(primary.getSnapshot());
+                if (workingSnapshot == null) {
+                    failures.add(primary.getBlockId() + ": 无法刷新差异数据");
+                    continue;
+                }
                 List<MigrationCandidate> ordered = new ArrayList<MigrationCandidate>(group.getCandidates());
                 ordered.sort(new java.util.Comparator<MigrationCandidate>() {
                     @Override
@@ -319,11 +331,26 @@ public class CodeBlockMigrationService {
                                     candidate.getDetail() == null ? null : candidate.getDetail().getStartLine(),
                                     referenceStartLine);
                         }
+                        List<String> expectedOriginal = candidate.getExpectedOriginal();
+                        if (CollectionUtils.isEmpty(expectedOriginal) && baseDiff != null && !CollectionUtils.isEmpty(baseDiff.getTargetLines())) {
+                            expectedOriginal = baseDiff.getTargetLines();
+                        }
                         BlockDiff diffForWrite = BlockDiff.from(baseDiff)
                                 .targetStartLine(referenceStartLine > 0 ? referenceStartLine : baseDiff.getTargetStartLine())
                                 .build();
-                        InsertionResult insertionResult = annotatedFileWriter.writeAnnotatedToFile(
-                                candidate.getDetail(), candidate.getAnnotatedCode(), diffForWrite, referenceStartLine);
+                        InsertionResult insertionResult = annotatedFileWriter.writeAnnotatedWithReplacement(
+                                candidate.getDetail(),
+                                candidate.getAnnotatedCode(),
+                                diffForWrite,
+                                referenceStartLine,
+                                expectedOriginal);
+                        if (insertionResult.isSkipped()) {
+                            log.warn("跳过迁移写入，未找到原始实现片段 blockId={} file={}",
+                                    candidate.getBlockId(),
+                                    candidate.getDetail() == null ? null : candidate.getDetail().getFilePath());
+                            failures.add(candidate.getBlockId() + ": 未找到原始实现片段，已跳过自动替换");
+                            continue;
+                        }
                         BlockDiff appliedDiff = BlockDiff.from(diffForWrite)
                                 .targetStartLine(insertionResult.getStartLine() > 0 ? insertionResult.getStartLine() : referenceStartLine)
                                 .build();
@@ -342,7 +369,10 @@ public class CodeBlockMigrationService {
                                     }
                                 });
                         blockDecisionRepository.save(updated);
-                        workingSnapshot = updated;
+                        workingSnapshot = diffSynchronizationService.refreshSnapshotForMigration(updated);
+                        if (workingSnapshot == null) {
+                            workingSnapshot = updated;
+                        }
                         succeeded++;
                         logInsertionResult(candidate, insertionResult);
                     } catch (Exception inner) {
@@ -456,12 +486,13 @@ public class CodeBlockMigrationService {
             return;
         }
         String filePath = candidate.getDetail() != null ? candidate.getDetail().getFilePath() : null;
+        String templateKey = candidate.getTemplateKey();
         if (result.isSkipped()) {
-            log.info("目标文件已存在迁移片段，跳过写入 blockId={} file={} startLine={} preview={}",
-                    candidate.getBlockId(), filePath, result.getStartLine(), result.preview());
+            log.info("跳过迁移写入 blockId={} file={} template={} startLine={} preview={}",
+                    candidate.getBlockId(), filePath, templateKey, result.getStartLine(), result.preview());
         } else {
-            log.info("已将迁移代码写入目标文件 blockId={} file={} startLine={} inserted={} replaced={} preview={}",
-                    candidate.getBlockId(), filePath, result.getStartLine(), result.getInsertedLines(),
+            log.info("已将迁移代码写入目标文件 blockId={} file={} template={} startLine={} inserted={} replaced={} preview={}",
+                    candidate.getBlockId(), filePath, templateKey, result.getStartLine(), result.getInsertedLines(),
                     result.getReplacedLines(), result.preview());
         }
     }

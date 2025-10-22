@@ -28,6 +28,11 @@ public class AnnotatedFileWriter {
 
     private final ProjectFileResolver projectFileResolver;
 
+    private enum WriteMode {
+        INSERT,
+        REPLACE
+    }
+
     public AnnotatedFileWriter(ProjectFileResolver projectFileResolver) {
         this.projectFileResolver = projectFileResolver;
     }
@@ -42,29 +47,22 @@ public class AnnotatedFileWriter {
                                                 String annotatedCode,
                                                 BlockDiff diff,
                                                 int overrideStartLine) throws IOException {
-        Path targetFile = projectFileResolver.resolveTargetFile(detail.getTargetProjectCode(), detail.getFilePath());
-        Files.createDirectories(targetFile.getParent());
+        return writeAnnotated(detail, annotatedCode, diff, overrideStartLine, WriteMode.INSERT, Collections.<String>emptyList());
+    }
 
-        String normalized = LineEndingNormalizer.normalize(annotatedCode);
-        List<String> annotatedLines = LineEndingNormalizer.splitLines(normalized);
-        List<String> existingLines = Files.exists(targetFile)
-                ? Files.readAllLines(targetFile, StandardCharsets.UTF_8)
-                : new ArrayList<String>();
+    public InsertionResult writeAnnotatedWithReplacement(CodeBlockDetailDTO detail,
+                                                         String annotatedCode,
+                                                         BlockDiff diff,
+                                                         List<String> expectedOriginal) throws IOException {
+        return writeAnnotatedWithReplacement(detail, annotatedCode, diff, -1, expectedOriginal);
+    }
 
-        int targetLine = determineTargetLine(detail, diff, overrideStartLine);
-        int insertIndex = clamp(targetLine - 1, 0, existingLines.size());
-
-        int replaced = 0;
-        existingLines.addAll(insertIndex, annotatedLines);
-
-        String updatedContent = LineEndingNormalizer.joinLines(existingLines);
-        Files.write(targetFile,
-                updatedContent.getBytes(StandardCharsets.UTF_8),
-                StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING,
-                StandardOpenOption.WRITE);
-
-        return InsertionResult.applied(insertIndex + 1, annotatedLines.size(), replaced, annotatedLines);
+    public InsertionResult writeAnnotatedWithReplacement(CodeBlockDetailDTO detail,
+                                                         String annotatedCode,
+                                                         BlockDiff diff,
+                                                         int overrideStartLine,
+                                                         List<String> expectedOriginal) throws IOException {
+        return writeAnnotated(detail, annotatedCode, diff, overrideStartLine, WriteMode.REPLACE, expectedOriginal);
     }
 
     private int determineTargetLine(CodeBlockDetailDTO detail, BlockDiff diff, int overrideStartLine) {
@@ -85,6 +83,162 @@ public class AnnotatedFileWriter {
 
     private int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(value, max));
+    }
+
+    private InsertionResult writeAnnotated(CodeBlockDetailDTO detail,
+                                           String annotatedCode,
+                                           BlockDiff diff,
+                                           int overrideStartLine,
+                                           WriteMode mode,
+                                           List<String> expectedOriginal) throws IOException {
+        Path targetFile = projectFileResolver.resolveTargetFile(detail.getTargetProjectCode(), detail.getFilePath());
+        Files.createDirectories(targetFile.getParent());
+
+        String normalized = LineEndingNormalizer.normalize(annotatedCode);
+        List<String> annotatedLines = LineEndingNormalizer.splitLines(normalized);
+        List<String> existingLines = Files.exists(targetFile)
+                ? Files.readAllLines(targetFile, StandardCharsets.UTF_8)
+                : new ArrayList<String>();
+
+        int targetLine = determineTargetLine(detail, diff, overrideStartLine);
+        int insertIndex = clamp(targetLine - 1, 0, existingLines.size());
+
+        ReplacementWindow window = null;
+        if (mode == WriteMode.REPLACE) {
+            List<String> expected = expectedOriginal == null ? Collections.<String>emptyList() : expectedOriginal;
+            if (CollectionUtils.isEmpty(expected) && diff != null && !CollectionUtils.isEmpty(diff.getTargetLines())) {
+                expected = diff.getTargetLines();
+            }
+            window = locateReplacementWindow(existingLines, insertIndex, expected);
+            if (window != null && window.length > 0) {
+                for (int i = 0; i < window.length && window.start < existingLines.size(); i++) {
+                    existingLines.remove(window.start);
+                }
+                insertIndex = window.start;
+            } else {
+                if (log.isDebugEnabled()) {
+                    log.debug("未找到原始实现片段，跳过替换写入，file={} startIndex={} expectedSize={}",
+                            detail == null ? null : detail.getFilePath(),
+                            Integer.valueOf(insertIndex),
+                            Integer.valueOf(expected == null ? 0 : expected.size()));
+                }
+                return InsertionResult.skipped(insertIndex + 1, annotatedLines);
+            }
+        }
+
+        existingLines.addAll(insertIndex, annotatedLines);
+
+        String updatedContent = LineEndingNormalizer.joinLines(existingLines);
+        Files.write(targetFile,
+                updatedContent.getBytes(StandardCharsets.UTF_8),
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.WRITE);
+
+        int replaced = window == null ? 0 : window.length;
+        return InsertionResult.applied(insertIndex + 1, annotatedLines.size(), replaced, annotatedLines);
+    }
+
+    private ReplacementWindow locateReplacementWindow(List<String> existingLines,
+                                                      int preferredIndex,
+                                                      List<String> expectedOriginal) {
+        List<String> sanitized = sanitizeExpected(expectedOriginal);
+        if (CollectionUtils.isEmpty(sanitized)) {
+            return null;
+        }
+        int matchIndex = matchAt(existingLines, preferredIndex, sanitized);
+        if (matchIndex < 0) {
+            matchIndex = findSegment(existingLines, sanitized);
+        }
+        if (matchIndex < 0) {
+            if (log.isDebugEnabled()) {
+                log.debug("未找到可替换的原始片段，保持追加模式 preferredIndex={} expectedSize={}",
+                        Integer.valueOf(preferredIndex),
+                        Integer.valueOf(sanitized.size()));
+            }
+            return null;
+        }
+        return ReplacementWindow.of(matchIndex, sanitized.size());
+    }
+
+    private int matchAt(List<String> existingLines, int startIndex, List<String> expected) {
+        if (CollectionUtils.isEmpty(expected) || existingLines == null) {
+            return -1;
+        }
+        if (startIndex < 0 || startIndex + expected.size() > existingLines.size()) {
+            return -1;
+        }
+        for (int i = 0; i < expected.size(); i++) {
+            if (!linesEqual(existingLines.get(startIndex + i), expected.get(i))) {
+                return -1;
+            }
+        }
+        return startIndex;
+    }
+
+    private int findSegment(List<String> existingLines, List<String> expected) {
+        if (CollectionUtils.isEmpty(expected) || CollectionUtils.isEmpty(existingLines)) {
+            return -1;
+        }
+        int maxStart = existingLines.size() - expected.size();
+        for (int i = 0; i <= maxStart; i++) {
+            boolean match = true;
+            for (int j = 0; j < expected.size(); j++) {
+                if (!linesEqual(existingLines.get(i + j), expected.get(j))) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private boolean linesEqual(String left, String right) {
+        return normalizeForComparison(left).equals(normalizeForComparison(right));
+    }
+
+    private String normalizeForComparison(String value) {
+        return Objects.toString(value, "").trim();
+    }
+
+    private List<String> sanitizeExpected(List<String> expectedOriginal) {
+        if (CollectionUtils.isEmpty(expectedOriginal)) {
+            return Collections.emptyList();
+        }
+        int start = 0;
+        int end = expectedOriginal.size() - 1;
+        while (start <= end && normalizeForComparison(expectedOriginal.get(start)).isEmpty()) {
+            start++;
+        }
+        while (end >= start && normalizeForComparison(expectedOriginal.get(end)).isEmpty()) {
+            end--;
+        }
+        if (start > end) {
+            return Collections.emptyList();
+        }
+        List<String> sanitized = new ArrayList<String>(end - start + 1);
+        for (int i = start; i <= end; i++) {
+            sanitized.add(expectedOriginal.get(i));
+        }
+        return sanitized;
+    }
+
+    private static final class ReplacementWindow {
+        private final int start;
+        private final int length;
+
+        private ReplacementWindow(int start, int length) {
+            this.start = Math.max(0, start);
+            this.length = Math.max(0, length);
+        }
+
+        private static ReplacementWindow of(int start, int length) {
+            return new ReplacementWindow(start, length);
+        }
+
     }
 
     public static final class InsertionResult {

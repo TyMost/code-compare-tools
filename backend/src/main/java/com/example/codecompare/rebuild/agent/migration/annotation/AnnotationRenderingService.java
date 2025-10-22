@@ -35,8 +35,20 @@ public class AnnotationRenderingService {
             return renderWithCustomTemplate(blockId, normalizedSource, targetBaseline, overrideTemplate);
         }
         boolean useAdaptTemplate = hasAdaptCategory(detail.getCategoryKeys());
+        String desiredKey = useAdaptTemplate ? "migrate_adapt" : "default";
         AnnotationTemplateProvider.AnnotationRenderResult result =
-                annotationTemplateProvider.render(blockId, normalizedSource, targetBaseline, useAdaptTemplate);
+                annotationTemplateProvider.renderWithKey(blockId, normalizedSource, targetBaseline, desiredKey);
+        return new RenderedAnnotation(result.getContent(), result.getTemplate(), result.getTemplateKey());
+    }
+
+    public RenderedAnnotation renderWithTemplateKey(CodeBlockDetailDTO detail,
+                                                    BlockDiff diff,
+                                                    String blockId,
+                                                    String templateKey) {
+        String normalizedSource = LineEndingNormalizer.normalize(detail.getOldCode());
+        String targetBaseline = extractTargetBaseline(detail, diff);
+        AnnotationTemplateProvider.AnnotationRenderResult result =
+                annotationTemplateProvider.renderWithKey(blockId, normalizedSource, targetBaseline, templateKey);
         return new RenderedAnnotation(result.getContent(), result.getTemplate(), result.getTemplateKey());
     }
 
