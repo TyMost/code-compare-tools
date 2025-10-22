@@ -1,0 +1,35 @@
+# Batch export example configuration.
+# Each pair provides an explicit source → target comparison. Paths point to the working copies containing scan data.
+#
+# These sample pairs only rely on the repositories that ship with the project so you can
+# immediately validate the Excel export produces multiple source→target rows.
+
+# Optional global agent flags. When set to false the migration stage will fall back to pure insertion mode.
+agent:
+  enable-replacement-mode: true
+
+pairs:
+  # Pair 1: projectA-git feature branch vs. projectB-git release branch.
+  # This is identical to the baseline used by the README and guarantees non-empty results.
+  - source:
+      code: projectA-git
+      path: D:\Coding\code-compare-tools\examples\projectA-git
+    target:
+      code: projectB-git
+      path: D:\Coding\code-compare-tools\examples\projectB-git
+    git-base-ref-source: refs/heads/main
+    git-target-ref-source: refs/heads/feature/git-demo
+    git-base-ref-target: refs/heads/main
+    git-target-ref-target: refs/heads/20251019v1.1Git
+
+  # Pair 3: compare two alternate repositories with distinct histories.
+  - source:
+      code: projectC-git
+      path: D:\Coding\code-compare-tools\examples\projectC-git
+    target:
+      code: projectD-git
+      path: D:\Coding\code-compare-tools\examples\projectD-git
+    git-base-ref-source: refs/heads/main
+    git-target-ref-source: refs/heads/feature/git-demo
+    git-base-ref-target: refs/heads/main
+    git-target-ref-target: refs/heads/release/git-demo

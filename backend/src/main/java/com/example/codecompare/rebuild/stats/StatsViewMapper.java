@@ -60,7 +60,9 @@ public class StatsViewMapper {
                 .oldProjectPath(oldPath)
                 .newProjectPath(newPath)
                 .lastSyncedAt(summary == null ? null : summary.getCompletedAt())
-                .newCodeRatio(metrics == null ? 0d : metrics.getNewCodeRatio())
+                .diffEngine(summary == null ? "default" : summary.getDiffEngine())
+                .gitSourceChangedLines(metrics == null ? 0L : metrics.getGitSourceChangedLines())
+                .gitTargetChangedLines(metrics == null ? 0L : metrics.getGitTargetChangedLines())
                 .totalLines(metrics == null ? 0 : metrics.getTotalLines())
                 .totalBlocks(metrics == null ? 0 : metrics.getTotalBlocks());
         if (metrics != null) {

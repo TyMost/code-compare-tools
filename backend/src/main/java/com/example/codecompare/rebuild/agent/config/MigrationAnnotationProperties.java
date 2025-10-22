@@ -13,11 +13,24 @@ public class MigrationAnnotationProperties {
      */
     private String annotationTemplate;
 
+    /**
+     * Whether to enable replacement mode when applying annotated code. Defaults to {@code true}.
+     */
+    private boolean enableReplacementMode = true;
+
     public String getAnnotationTemplate() {
         return annotationTemplate;
     }
 
     public void setAnnotationTemplate(String annotationTemplate) {
         this.annotationTemplate = annotationTemplate;
+    }
+
+    public boolean isEnableReplacementMode() {
+        return enableReplacementMode;
+    }
+
+    public void setEnableReplacementMode(boolean enableReplacementMode) {
+        this.enableReplacementMode = enableReplacementMode;
     }
 }

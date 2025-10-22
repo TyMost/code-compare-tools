@@ -89,7 +89,7 @@ rules:
       comparison: below
       label: "未迁移"
       priority: 1
-      statusKey: "unmigrated
+      statusKey: "unmigrated"
       color: "#F56C6C"
   - id: similarity-partial
     type: similarity
@@ -124,6 +124,28 @@ rules:
       priority: 1100
       statusKey: "migrated"
       color: "#67C23A"
+  - id: annotation-migrated
+    type: annotation-marker
+    displayName: "迁移代码块"
+    params:
+      mode: "both"
+      label: "迁移代码块"
+      statusKey: "annotation_migrated"
+      priority: 1200
+      color: "#67C23A"
+      startMarker: "/** 迁移生成的代码片段开始 */"
+      endMarker: "/** 迁移生成的代码片段结束 */"
+  - id: annotation-partial
+    type: annotation-marker
+    displayName: "自动迁移适配"
+    params:
+      mode: "any"
+      label: "自动迁移适配"
+      statusKey: "annotation_partial"
+      priority: 1150
+      color: "#409EFF"
+      startMarker: "/** 迁移生成的代码片段开始 */"
+      endMarker: "/** 迁移生成的代码片段结束 */"
 #  - id: fallback-other
 #    type: similarity
 #    displayName: "其他"

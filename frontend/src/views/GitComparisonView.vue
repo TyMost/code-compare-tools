@@ -690,7 +690,27 @@ export default {
         .join('\n\n');
     },
     buildBlockRows(block) {
-      if (!block || !block.diff) {
+      if (!block) {
+        return [];
+      }
+      const alignedLines = Array.isArray(block.alignedLines)
+        ? block.alignedLines
+        : [];
+      if (alignedLines.length) {
+        return alignedLines.map((line, index) => {
+          const key = `${block.blockId || index}-${index}`;
+          const type = this.normalizeLineType(line.type);
+          return {
+            key,
+            type,
+            leftNo: line.sourceLine ?? '',
+            leftText: line.sourceText || '',
+            rightNo: line.targetLine ?? '',
+            rightText: line.targetText || '',
+          };
+        });
+      }
+      if (!block.diff) {
         return [];
       }
       const sourceLines = block.diff.sourceLines || [];
@@ -728,6 +748,14 @@ export default {
         }
       }
       return rows;
+    },
+    normalizeLineType(type) {
+      const allowed = ['context', 'add', 'remove', 'change', 'info', 'hunk'];
+      if (typeof type !== 'string') {
+        return 'context';
+      }
+      const lower = type.trim().toLowerCase();
+      return allowed.includes(lower) ? lower : 'context';
     },
   },
 };

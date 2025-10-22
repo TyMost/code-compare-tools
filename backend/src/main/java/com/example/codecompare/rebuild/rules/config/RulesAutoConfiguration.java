@@ -5,6 +5,7 @@ import com.example.codecompare.rebuild.rules.DefaultRuleRegistry;
 import com.example.codecompare.rebuild.rules.RuleEvaluationFacade;
 import com.example.codecompare.rebuild.rules.RuleLoader;
 import com.example.codecompare.rebuild.rules.RuleRegistry;
+import com.example.codecompare.rebuild.rules.strategy.AnnotationMarkerRuleStrategy;
 import com.example.codecompare.rebuild.rules.strategy.BlockFilterRuleStrategy;
 import com.example.codecompare.rebuild.rules.strategy.ContentMaskRuleStrategy;
 import com.example.codecompare.rebuild.rules.strategy.FieldReplaceRuleStrategy;
@@ -50,6 +51,11 @@ public class RulesAutoConfiguration {
     @Bean
     public RuleStrategy presenceRuleStrategy() {
         return new PresenceRuleStrategy();
+    }
+
+    @Bean
+    public RuleStrategy annotationMarkerRuleStrategy() {
+        return new AnnotationMarkerRuleStrategy();
     }
 
     @Bean

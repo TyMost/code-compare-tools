@@ -10,6 +10,8 @@ import java.time.Instant;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Represents a single diff block enriched with metadata and status information.
@@ -23,6 +25,7 @@ public final class IncrementalDiffBlockView {
     private final Map<String, Object> metadata;
     private final BlockDiff diff;
     private final Instant analyzedAt;
+    private final List<AlignedDiffLineView> alignedLines;
 
     private IncrementalDiffBlockView(Builder builder) {
         this.blockId = builder.blockId;
@@ -33,6 +36,9 @@ public final class IncrementalDiffBlockView {
                 : Collections.unmodifiableMap(new LinkedHashMap<>(builder.metadata));
         this.diff = builder.diff;
         this.analyzedAt = builder.analyzedAt;
+        this.alignedLines = builder.alignedLines == null
+                ? Collections.emptyList()
+                : Collections.unmodifiableList(new ArrayList<>(builder.alignedLines));
     }
 
     public static Builder builder() {
@@ -63,6 +69,10 @@ public final class IncrementalDiffBlockView {
         return analyzedAt;
     }
 
+    public List<AlignedDiffLineView> getAlignedLines() {
+        return alignedLines;
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     @JsonPOJOBuilder(withPrefix = "")
     public static final class Builder {
@@ -72,6 +82,7 @@ public final class IncrementalDiffBlockView {
         private Map<String, Object> metadata;
         private BlockDiff diff;
         private Instant analyzedAt;
+        private List<AlignedDiffLineView> alignedLines;
 
         public Builder blockId(@JsonProperty("blockId") String blockId) {
             this.blockId = blockId;
@@ -100,6 +111,11 @@ public final class IncrementalDiffBlockView {
 
         public Builder analyzedAt(@JsonProperty("analyzedAt") Instant analyzedAt) {
             this.analyzedAt = analyzedAt;
+            return this;
+        }
+
+        public Builder alignedLines(@JsonProperty("alignedLines") List<AlignedDiffLineView> alignedLines) {
+            this.alignedLines = alignedLines;
             return this;
         }
 

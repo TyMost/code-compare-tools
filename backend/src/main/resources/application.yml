@@ -1,5 +1,5 @@
 ﻿server:
-  port: 8081
+  port: 8087
 
 spring:
   application:
@@ -12,6 +12,8 @@ management:
         include: health,info
 
 logging:
+  file:
+    path: D:\\Coding\\code-compare-tools\\backend\\logs
   level:
     com.example.codecompare.rebuild.agent.CodeBlockMigrationService: DEBUG
     com.example.codecompare.rebuild.scanning: DEBUG
@@ -37,8 +39,8 @@ migration:
     git-target-ref-target: refs/heads/release/git-demo
     include-working-tree: true
     since-last-summary: false
-    # Set false to skip the demo full scan when the service boots.
-    auto-scan-on-startup: false
+    git-fetch-missing-refs: true
+    transient-persist: false
     ignore-globs:
       - ".git/**"
       - ".idea/**"
@@ -62,4 +64,5 @@ migration:
     pretty-print: true
   agent:
     annotation-template: classpath:migration/annotation-template.yml
+    enable-replacement-mode: true
 

@@ -349,6 +349,8 @@ public class ProjectDiffGenerator implements ApplicationListener<ScanCompletedEv
                 fileSimilarity);
         if (!context.gitDiffPayload.isEmpty()) {
             context.gitDiffPayload.put("sameLineCount", gitLineStats.getSameLines());
+            context.gitDiffPayload.put("addedLineCount", gitLineStats.getAddedLines());
+            context.gitDiffPayload.put("removedLineCount", gitLineStats.getRemovedLines());
             context.gitDiffPayload.put("changedLineCount", gitLineStats.getChangedLines());
             context.gitDiffPayload.put("weightedBlockLineCount", context.weightedLineCount);
             context.gitDiffPayload.put("fileSimilarity", fileSimilarity);
@@ -823,7 +825,8 @@ public class ProjectDiffGenerator implements ApplicationListener<ScanCompletedEv
             return GitDiffLineStats.empty();
         }
         int sameLines = 0;
-        int changedLines = 0;
+        int addedLines = 0;
+        int removedLines = 0;
         for (GitDiffHunk hunk : gitDiffFile.getHunks()) {
             if (hunk == null || CollectionUtils.isEmpty(hunk.getLines())) {
                 continue;
@@ -835,12 +838,14 @@ public class ProjectDiffGenerator implements ApplicationListener<ScanCompletedEv
                 char marker = line.charAt(0);
                 if (marker == ' ') {
                     sameLines++;
-                } else if (marker == '+' || marker == '-') {
-                    changedLines++;
+                } else if (marker == '+') {
+                    addedLines++;
+                } else if (marker == '-') {
+                    removedLines++;
                 }
             }
         }
-        return new GitDiffLineStats(sameLines, changedLines);
+        return new GitDiffLineStats(sameLines, addedLines, removedLines);
     }
 
     private String resolveProjectType(String projectCode, String sourceCode, String targetCode) {
@@ -979,13 +984,15 @@ public class ProjectDiffGenerator implements ApplicationListener<ScanCompletedEv
     }
 
     private static final class GitDiffLineStats {
-        private static final GitDiffLineStats EMPTY = new GitDiffLineStats(0, 0);
+        private static final GitDiffLineStats EMPTY = new GitDiffLineStats(0, 0, 0);
         private final int sameLines;
-        private final int changedLines;
+        private final int addedLines;
+        private final int removedLines;
 
-        private GitDiffLineStats(int sameLines, int changedLines) {
+        private GitDiffLineStats(int sameLines, int addedLines, int removedLines) {
             this.sameLines = Math.max(0, sameLines);
-            this.changedLines = Math.max(0, changedLines);
+            this.addedLines = Math.max(0, addedLines);
+            this.removedLines = Math.max(0, removedLines);
         }
 
         static GitDiffLineStats empty() {
@@ -996,8 +1003,16 @@ public class ProjectDiffGenerator implements ApplicationListener<ScanCompletedEv
             return sameLines;
         }
 
+        int getAddedLines() {
+            return addedLines;
+        }
+
+        int getRemovedLines() {
+            return removedLines;
+        }
+
         int getChangedLines() {
-            return changedLines;
+            return addedLines + removedLines;
         }
     }
 }

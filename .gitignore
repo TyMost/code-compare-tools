@@ -57,3 +57,5 @@ pnpm-debug.log*
 *.sw?
 package-lock.json
 yarn.lock
+#临时的压缩包文件
+*.7z

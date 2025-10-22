@@ -114,8 +114,11 @@ public class FileSystemDiffSnapshotRepository implements DiffSnapshotRepository 
                 state.lock.writeLock().unlock();
             }
         }
-        Path directory = properties.resolveDiffSnapshots().resolve(safeSegment(comparisonId));
-        deleteDirectory(directory);
+        List<Path> directories = StorageFileHelper.findComparisonDirectories(
+                properties.resolveDiffSnapshots(), comparisonId);
+        for (Path directory : directories) {
+            deleteDirectory(directory);
+        }
     }
 
     @Override
@@ -204,21 +207,26 @@ public class FileSystemDiffSnapshotRepository implements DiffSnapshotRepository 
     }
 
     private void tryLoadFromDisk(String comparisonId, Collection<DiffSnapshotDocument> target) {
-        Path base = properties.resolveDiffSnapshots().resolve(safeSegment(comparisonId));
-        if (!Files.exists(base)) {
+        List<Path> directories = StorageFileHelper.findComparisonDirectories(
+                properties.resolveDiffSnapshots(), comparisonId);
+        if (directories.isEmpty()) {
             return;
         }
-        try {
-            Files.list(base)
-                    .filter(Files::isRegularFile)
-                    .forEach(path -> {
-                        StoredDiffSnapshots stored = JsonStore.read(path, objectMapper, TYPE);
-                        if (stored != null && stored.snapshots != null) {
-                            target.addAll(stored.snapshots);
-                        }
-                    });
-        } catch (IOException ex) {
-            throw new IllegalStateException("Failed to read diff snapshot directory: " + base, ex);
+        for (Path directory : directories) {
+            if (!Files.exists(directory)) {
+                continue;
+            }
+            try (Stream<Path> files = Files.list(directory)) {
+                files.filter(Files::isRegularFile)
+                        .forEach(path -> {
+                            StoredDiffSnapshots stored = JsonStore.read(path, objectMapper, TYPE);
+                            if (stored != null && stored.snapshots != null) {
+                                target.addAll(stored.snapshots);
+                            }
+                        });
+            } catch (IOException ex) {
+                throw new IllegalStateException("Failed to read diff snapshot directory: " + directory, ex);
+            }
         }
     }
 
@@ -259,13 +267,6 @@ public class FileSystemDiffSnapshotRepository implements DiffSnapshotRepository 
         } catch (IOException ex) {
             throw new IllegalStateException("Failed to delete diff snapshot directory: " + directory, ex);
         }
-    }
-
-    private String safeSegment(String raw) {
-        if (raw == null) {
-            return "default";
-        }
-        return raw.replaceAll("[^a-zA-Z0-9._-]", "_");
     }
 
     private static final class SnapshotState {

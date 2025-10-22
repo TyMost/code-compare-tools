@@ -4,6 +4,7 @@ import com.example.codecompare.rebuild.api.dto.GitComparisonFileView;
 import com.example.codecompare.rebuild.api.dto.GitComparisonProjectView;
 import com.example.codecompare.rebuild.api.dto.GitComparisonResponseView;
 import com.example.codecompare.rebuild.api.dto.DualIncrementalComparisonView;
+import com.example.codecompare.rebuild.api.dto.AlignedDiffLineView;
 import com.example.codecompare.rebuild.api.dto.IncrementalDiffBlockView;
 import com.example.codecompare.rebuild.api.dto.IncrementalDiffFileCategoryView;
 import com.example.codecompare.rebuild.api.dto.IncrementalDiffFileDetailView;
@@ -13,7 +14,13 @@ import com.example.codecompare.rebuild.api.dto.IncrementalDiffGitHunkView;
 import com.example.codecompare.rebuild.api.dto.IncrementalDiffGitSnapshotView;
 import com.example.codecompare.rebuild.api.dto.IncrementalDiffOverviewView;
 import com.example.codecompare.rebuild.block.model.BlockDiff;
+import com.example.codecompare.rebuild.diff.support.BlockDiffAlignment;
+import com.example.codecompare.rebuild.diff.support.BlockDiffAlignment.Line;
+import com.example.codecompare.rebuild.diff.support.BlockDiffAlignment.LineType;
 import com.example.codecompare.rebuild.scanning.compare.DualIncrementalComparisonCalculator;
+import com.example.codecompare.rebuild.scanning.ScanProperties;
+import com.example.codecompare.rebuild.scanning.TransientProjectRegistry;
+import com.example.codecompare.rebuild.scanning.TransientProjectRegistry.TransientProjectDescriptor;
 import com.example.codecompare.rebuild.core.support.ProjectRootRegistry;
 import com.example.codecompare.rebuild.core.support.ProjectRootRegistry.ProjectRootDescriptor;
 import com.example.codecompare.rebuild.repository.BlockDecisionRepository;
@@ -58,6 +65,8 @@ public class IncrementalDiffFacade {
     private final ProjectRootRegistry projectRootRegistry;
     private final CategoryLabelResolver categoryLabelResolver;
     private final DualIncrementalComparisonCalculator dualIncrementalComparisonCalculator;
+    private final TransientProjectRegistry transientProjectRegistry;
+    private final ScanProperties scanProperties;
 
     public IncrementalDiffFacade(FileScanService fileScanService,
                                  ScanResultRepository scanResultRepository,
@@ -65,7 +74,9 @@ public class IncrementalDiffFacade {
                                  BlockDecisionRepository blockDecisionRepository,
                                  ProjectRootRegistry projectRootRegistry,
                                  CategoryLabelResolver categoryLabelResolver,
-                                 DualIncrementalComparisonCalculator dualIncrementalComparisonCalculator) {
+                                 DualIncrementalComparisonCalculator dualIncrementalComparisonCalculator,
+                                 TransientProjectRegistry transientProjectRegistry,
+                                 ScanProperties scanProperties) {
         this.fileScanService = fileScanService;
         this.scanResultRepository = scanResultRepository;
         this.diffSnapshotRepository = diffSnapshotRepository;
@@ -73,6 +84,8 @@ public class IncrementalDiffFacade {
         this.projectRootRegistry = projectRootRegistry;
         this.categoryLabelResolver = categoryLabelResolver;
         this.dualIncrementalComparisonCalculator = dualIncrementalComparisonCalculator;
+        this.transientProjectRegistry = transientProjectRegistry;
+        this.scanProperties = scanProperties;
     }
 
     public GitComparisonResponseView compareProjects(String sourceProjectKey,
@@ -136,7 +149,16 @@ public class IncrementalDiffFacade {
 
     public IncrementalDiffOverviewView loadOverview(String requestedProjectCode, boolean refresh) {
         String comparisonId = resolveComparisonId(requestedProjectCode);
-        ScanSummary summary = refresh ? triggerIncrementalScan(comparisonId) : findLatestSummary(comparisonId);
+        boolean transientProject = isTransientProject(comparisonId);
+        ScanSummary summary;
+        if (refresh || (transientProject && !scanProperties.isTransientPersist())) {
+            summary = triggerIncrementalScan(comparisonId);
+        } else {
+            summary = findLatestSummary(comparisonId);
+            if (summary == null && transientProject) {
+                summary = triggerIncrementalScan(comparisonId);
+            }
+        }
         if (summary == null) {
             log.info("未找到增量扫描概要，projectCode={}", comparisonId);
             return IncrementalDiffOverviewView.builder()
@@ -263,6 +285,7 @@ public class IncrementalDiffFacade {
                 .metadata(metadata)
                 .diff(diff)
                 .analyzedAt(record.getAnalyzedAt())
+                .alignedLines(buildAlignedLines(diff))
                 .build();
     }
 
@@ -440,6 +463,10 @@ public class IncrementalDiffFacade {
         if (descriptor.isPresent()) {
             return descriptor.get().getPath().toString();
         }
+        Optional<TransientProjectDescriptor> transientDescriptor = transientProjectRegistry.findByCode(key);
+        if (transientDescriptor.isPresent()) {
+            return transientDescriptor.get().getPath().toString();
+        }
         try {
             ProjectRootRegistry.ProjectRootType type = ProjectRootRegistry.ProjectRootType.valueOf(key);
             List<ProjectRootDescriptor> candidates = type == ProjectRootRegistry.ProjectRootType.SOURCE
@@ -457,6 +484,9 @@ public class IncrementalDiffFacade {
     private ScanSummary triggerIncrementalScan(String requestedProjectCode) {
         try {
             ProjectScanRequest request = buildScanRequest(requestedProjectCode);
+            if (isTransientProject(requestedProjectCode)) {
+                return fileScanService.scanIncremental(request, scanProperties.isTransientPersist());
+            }
             return fileScanService.scanIncremental(request);
         } catch (Exception ex) {
             log.warn("增量扫描失败，projectCode={}，尝试返回最近结果", requestedProjectCode, ex);
@@ -476,6 +506,14 @@ public class IncrementalDiffFacade {
             builder.addRoot(descriptor.get().getPath());
             return builder.build();
         }
+        Optional<TransientProjectDescriptor> transientDescriptor = transientProjectRegistry.findByCode(projectCode);
+        if (transientDescriptor.isPresent()) {
+            ProjectScanRequest.Builder builder = ProjectScanRequest.builder()
+                    .projectCode(transientDescriptor.get().getCode())
+                    .skipHidden(true);
+            builder.addRoot(transientDescriptor.get().getPath());
+            return builder.build();
+        }
         return null;
     }
 
@@ -485,9 +523,19 @@ public class IncrementalDiffFacade {
             if (summary.isPresent()) {
                 return summary.get();
             }
+            if (isTransientProject(projectCode)) {
+                return null;
+            }
         }
         String fallback = defaultComparisonId();
         return scanResultRepository.findLatestSummary(fallback).orElse(null);
+    }
+
+    private boolean isTransientProject(String projectCode) {
+        if (!StringUtils.hasText(projectCode)) {
+            return false;
+        }
+        return transientProjectRegistry.findByCode(projectCode.trim()).isPresent();
     }
 
     private String resolveComparisonId(String requestedProjectCode) {
@@ -618,5 +666,39 @@ public class IncrementalDiffFacade {
             result.add(asString(value));
         }
         return result;
+    }
+
+    private List<AlignedDiffLineView> buildAlignedLines(BlockDiff diff) {
+        List<Line> aligned = BlockDiffAlignment.align(diff);
+        if (aligned.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<AlignedDiffLineView> result = new ArrayList<>(aligned.size());
+        for (Line line : aligned) {
+            result.add(AlignedDiffLineView.builder()
+                    .type(toCssType(line.getType()))
+                    .sourceLine(line.getSourceLine())
+                    .sourceText(line.getSourceText())
+                    .targetLine(line.getTargetLine())
+                    .targetText(line.getTargetText())
+                    .build());
+        }
+        return result;
+    }
+
+    private String toCssType(LineType type) {
+        if (type == null) {
+            return "context";
+        }
+        switch (type) {
+            case ADD:
+                return "add";
+            case REMOVE:
+                return "remove";
+            case CHANGE:
+                return "change";
+            default:
+                return "context";
+        }
     }
 }

@@ -4,6 +4,7 @@ import com.example.codecompare.rebuild.agent.migration.CodeBlockMigrationConstan
 import com.example.codecompare.rebuild.block.model.BlockDiff;
 import com.example.codecompare.rebuild.repository.model.BlockDecisionRecord;
 import com.example.codecompare.rebuild.repository.model.BlockDecisionSnapshot;
+import com.example.codecompare.rebuild.scanning.BlockLabelConstants;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -14,7 +15,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
@@ -97,21 +97,38 @@ public class BlockDecisionMutationService {
         }
         BlockDiff baseDiff = original.getDiff();
         backupUndoMetadata(metadata, original, baseDiff);
-        List<String> labelIds = extendLabels(baseDiff == null ? null : baseDiff.getLabelIds(), status);
-        List<String> labels = extendLabels(baseDiff == null ? null : baseDiff.getLabels(), riskLabel);
+        boolean cleanLabels = shouldCleanLabels(stage);
+        List<String> labelIds = prepareLabelList(baseDiff == null ? null : baseDiff.getLabelIds(), cleanLabels);
+        List<String> labels = prepareLabelList(baseDiff == null ? null : baseDiff.getLabels(), cleanLabels);
+        appendLabel(labelIds, status);
+        appendLabel(labels, riskLabel);
         BlockDiff.Builder diffBuilder = baseDiff == null ? BlockDiff.builder() : BlockDiff.from(baseDiff);
         BlockDiff updatedDiff = diffBuilder
                 .labelIds(labelIds)
                 .labels(labels)
                 .targetContent(annotatedCode)
                 .build();
+        String fallbackStatus = StringUtils.hasText(status)
+                ? status
+                : (cleanLabels ? BlockLabelConstants.STATUS_NO_RULES : original.getStatus());
+        String fallbackRisk = StringUtils.hasText(riskLabel)
+                ? riskLabel
+                : (cleanLabels ? null : original.getRiskLevel());
+        String resolvedStatus = resolveStatusFromDiff(updatedDiff, fallbackStatus);
+        if (!StringUtils.hasText(resolvedStatus)) {
+            resolvedStatus = BlockLabelConstants.STATUS_NO_RULES;
+        }
+        String resolvedRisk = resolveLabelFromDiff(updatedDiff, fallbackRisk);
+        if (!StringUtils.hasText(resolvedRisk)) {
+            resolvedRisk = resolvedStatus;
+        }
         return BlockDecisionRecord.builder()
                 .id(original.getId())
                 .comparisonId(original.getComparisonId())
                 .filePath(original.getFilePath())
                 .blockIdentifier(original.getBlockIdentifier())
-                .status(status)
-                .riskLevel(riskLabel)
+                .status(resolvedStatus)
+                .riskLevel(resolvedRisk)
                 .action(original.getAction())
                 .metadata(metadata)
                 .diff(updatedDiff)
@@ -272,22 +289,67 @@ public class BlockDecisionMutationService {
         return result;
     }
 
-    private List<String> extendLabels(List<String> source, String candidate) {
-        List<String> result = new ArrayList<String>(source == null ? Collections.<String>emptyList() : source);
-        if (!StringUtils.hasText(candidate)) {
-            return result;
-        }
-        String lowered = candidate.toLowerCase(Locale.ROOT);
-        boolean exists = false;
-        for (String item : result) {
-            if (item != null && lowered.equals(item.toLowerCase(Locale.ROOT))) {
-                exists = true;
-                break;
+    private List<String> prepareLabelList(List<String> source, boolean clean) {
+        List<String> result = new ArrayList<String>();
+        if (!clean && !CollectionUtils.isEmpty(source)) {
+            for (String item : source) {
+                appendLabel(result, item);
             }
         }
-        if (!exists) {
-            result.add(candidate);
-        }
         return result;
+    }
+
+    private void appendLabel(List<String> target, String candidate) {
+        if (target == null || !StringUtils.hasText(candidate)) {
+            return;
+        }
+        String normalized = candidate.trim();
+        if (normalized.isEmpty()) {
+            return;
+        }
+        for (String existing : target) {
+            if (existing != null && normalized.equalsIgnoreCase(existing.trim())) {
+                return;
+            }
+        }
+        target.add(normalized);
+    }
+
+    private boolean shouldCleanLabels(String stage) {
+        if (!StringUtils.hasText(stage)) {
+            return false;
+        }
+        return CodeBlockMigrationConstants.STAGE_APPLIED.equalsIgnoreCase(stage);
+    }
+
+    private String resolveStatusFromDiff(BlockDiff diff, String fallback) {
+        if (diff != null) {
+            BlockDiff.LabelDescriptor primary = diff.getPrimaryLabel();
+            if (primary != null && StringUtils.hasText(primary.getStatusKey())) {
+                return primary.getStatusKey();
+            }
+            List<String> ids = diff.getLabelIds();
+            if (!CollectionUtils.isEmpty(ids)) {
+                return ids.get(0);
+            }
+        }
+        return fallback;
+    }
+
+    private String resolveLabelFromDiff(BlockDiff diff, String fallback) {
+        if (diff != null) {
+            BlockDiff.LabelDescriptor primary = diff.getPrimaryLabel();
+            if (primary != null && StringUtils.hasText(primary.getLabelName())) {
+                return primary.getLabelName();
+            }
+            if (primary != null && StringUtils.hasText(primary.getLabelId())) {
+                return primary.getLabelId();
+            }
+            List<String> labels = diff.getLabels();
+            if (!CollectionUtils.isEmpty(labels)) {
+                return labels.get(0);
+            }
+        }
+        return fallback;
     }
 }

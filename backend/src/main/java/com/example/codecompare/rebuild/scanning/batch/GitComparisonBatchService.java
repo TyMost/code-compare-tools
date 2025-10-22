@@ -10,6 +10,8 @@ import com.example.codecompare.rebuild.core.support.ProjectRootRegistry.ProjectR
 import com.example.codecompare.rebuild.scanning.FileScanService;
 import com.example.codecompare.rebuild.scanning.IncrementalDiffFacade;
 import com.example.codecompare.rebuild.scanning.ProjectScanRequest;
+import com.example.codecompare.rebuild.scanning.TransientProjectRegistry;
+import com.example.codecompare.rebuild.scanning.TransientProjectRegistry.TransientProjectDescriptor;
 import com.example.codecompare.rebuild.scanning.ScanProperties;
 import com.example.codecompare.rebuild.scanning.ScanResultRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -61,6 +63,7 @@ public class GitComparisonBatchService {
     private final ScanResultRepository scanResultRepository;
     private final Clock clock;
     private final ObjectMapper yamlMapper;
+    private final TransientProjectRegistry transientProjectRegistry;
 
     public GitComparisonBatchService(IncrementalDiffFacade incrementalDiffFacade,
                                      ApplicationProperties applicationProperties,
@@ -68,7 +71,8 @@ public class GitComparisonBatchService {
                                      ProjectRootRegistry projectRootRegistry,
                                      FileScanService fileScanService,
                                      ScanResultRepository scanResultRepository,
-                                     Clock clock) {
+                                     Clock clock,
+                                     TransientProjectRegistry transientProjectRegistry) {
         this.incrementalDiffFacade = incrementalDiffFacade;
         this.applicationProperties = applicationProperties;
         this.scanProperties = scanProperties;
@@ -76,6 +80,7 @@ public class GitComparisonBatchService {
         this.fileScanService = fileScanService;
         this.scanResultRepository = scanResultRepository;
         this.clock = clock;
+        this.transientProjectRegistry = transientProjectRegistry;
         this.yamlMapper = new ObjectMapper(new YAMLFactory());
         this.yamlMapper.findAndRegisterModules();
     }
@@ -102,6 +107,14 @@ public class GitComparisonBatchService {
             return new GitComparisonBatchExportResult(content, filename);
         } finally {
             snapshot.restore(scanProperties);
+            List<TransientProjectDescriptor> transientDescriptors =
+                    new ArrayList<>(transientProjectRegistry.getAllDescriptors());
+            if (!scanProperties.isTransientPersist()) {
+                for (TransientProjectDescriptor descriptor : transientDescriptors) {
+                    fileScanService.purgeProject(descriptor.getCode());
+                }
+            }
+            transientProjectRegistry.clear();
         }
     }
 
@@ -236,7 +249,17 @@ public class GitComparisonBatchService {
             combined.put(pair.target.code, pair.target);
         }
         for (ProjectEntry entry : combined.values()) {
+            registerTransientProject(entry);
             ensureProjectInitialized(entry, refresh);
+        }
+    }
+
+    private void registerTransientProject(ProjectEntry entry) {
+        if (entry == null || !StringUtils.hasText(entry.code) || !StringUtils.hasText(entry.path)) {
+            return;
+        }
+        if (!projectRootRegistry.findByCode(entry.code).isPresent()) {
+            transientProjectRegistry.register(entry.code, entry.path);
         }
     }
 
@@ -292,7 +315,7 @@ public class GitComparisonBatchService {
                     .addRoot(normalizedPath)
                     .skipHidden(true)
                     .build();
-            fileScanService.scanIncremental(request);
+            fileScanService.scanIncremental(request, scanProperties.isTransientPersist());
         }
     }
 

@@ -1,6 +1,6 @@
 import request from './request';
 
-// 迁移工作流 API 封装，对应 core 模块暴露的后端接口
+// 迁移工作流 API 封装，对接 core 模块暴露的后端接口
 export const fetchOverview = (params) =>
   request.get('/migration/overview', { params });
 
@@ -8,9 +8,9 @@ export const fetchOverview = (params) =>
 export const fetchCodeBlocks = (params) =>
   request.get('/migration/code-blocks', { params });
 
-// 获取单个代码块详情
-export const fetchCodeBlockDetail = (id) =>
-  request.get(`/migration/code-blocks/${id}`);
+// 获取单个代码块详情，支持携带筛选参数保持上下文一致
+export const fetchCodeBlockDetail = (id, params = {}) =>
+  request.get(`/migration/code-blocks/${id}`, { params });
 
 // 预留 AI 建议接口，对应后端占位实现
 export const fetchAISuggestion = (id) =>

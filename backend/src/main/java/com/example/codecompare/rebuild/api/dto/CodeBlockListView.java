@@ -16,7 +16,6 @@ public class CodeBlockListView {
     private final long total;
     private final int totalPages;
     private final List<CategoryFilterDTO> categoryOptions;
-    private final double newCodeRatio;
     private final long totalLines;
 
     public CodeBlockListView(List<CodeBlockItemView> data,
@@ -25,7 +24,6 @@ public class CodeBlockListView {
                              long total,
                              int totalPages,
                              List<CategoryFilterDTO> categoryOptions,
-                             double newCodeRatio,
                              long totalLines) {
         this.data = data == null ? Collections.emptyList() : Collections.unmodifiableList(data);
         this.page = page;
@@ -35,7 +33,6 @@ public class CodeBlockListView {
         this.categoryOptions = categoryOptions == null
                 ? Collections.emptyList()
                 : Collections.unmodifiableList(categoryOptions);
-        this.newCodeRatio = newCodeRatio;
         this.totalLines = totalLines;
     }
 
@@ -61,10 +58,6 @@ public class CodeBlockListView {
 
     public List<CategoryFilterDTO> getCategoryOptions() {
         return categoryOptions;
-    }
-
-    public double getNewCodeRatio() {
-        return newCodeRatio;
     }
 
     public long getTotalLines() {

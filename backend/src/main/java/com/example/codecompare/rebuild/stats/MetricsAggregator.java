@@ -53,6 +53,11 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
     private final CategoryLabelResolver categoryLabelResolver;
     private final ProjectRootRegistry projectRootRegistry;
     private final ConcurrentMap<String, ScanSummary> summaryCache = new ConcurrentHashMap<>();
+    private static final Comparator<BlockItem> BLOCK_ITEM_COMPARATOR =
+            Comparator.comparing(BlockItem::getFilePath, Comparator.nullsLast(String::compareTo))
+                    .thenComparingInt(BlockItem::getStartLine)
+                    .thenComparingInt(BlockItem::getEndLine)
+                    .thenComparing(BlockItem::getId);
 
     public MetricsAggregator(ScanResultRepository scanResultRepository,
                              DiffSnapshotRepository diffSnapshotRepository,
@@ -89,6 +94,8 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
         Map<String, Long> lineCounts = new LinkedHashMap<>();
         long totalBlocks = 0L;
         long totalLinesFromSnapshots = 0L;
+        long sourceChangedLines = 0L;
+        long targetChangedLines = 0L;
 
         int pageIndex = 0;
         final int pageSize = 200;
@@ -103,6 +110,9 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
                 totalBlocks += document.getTotalBlocks();
                 mergeCounts(labelCounts, document.getLabelCounts());
                 mergeCounts(lineCounts, document.getLineCounts());
+                GitLineTotals gitTotals = extractGitLineTotals(document);
+                sourceChangedLines += gitTotals.getRemovedLines();
+                targetChangedLines += gitTotals.getAddedLines();
                 long documentLineSum = document.getLineCounts() == null
                         ? 0L
                         : document.getLineCounts().values().stream()
@@ -131,8 +141,6 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
         long totalLines = totalLinesFromSnapshots > 0
                 ? totalLinesFromSnapshots
                 : lineCounts.values().stream().mapToLong(Long::longValue).sum();
-        double newCodeRatio = 0d;
-
         Set<String> categoryKeys = new LinkedHashSet<>();
         categoryKeys.addAll(labelCounts.keySet());
         categoryKeys.addAll(lineCounts.keySet());
@@ -148,7 +156,7 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
                         lineCounts.getOrDefault(categoryKey, 0L)))
                 .collect(Collectors.toList());
 
-        return new CategoryMetrics(categories, totalLines, newCodeRatio, totalBlocks);
+        return new CategoryMetrics(categories, totalLines, totalBlocks, sourceChangedLines, targetChangedLines);
     }
 
     public CodeBlockPage loadCodeBlocks(CodeBlockQuery query) {
@@ -157,26 +165,7 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
                 : StringUtils.hasText(query.getProjectKey()) ? query.getProjectKey() : defaultComparisonId();
 
         List<BlockItem> allBlocks = loadAllBlockItems(comparisonId);
-        Set<String> categoryFilter = query.getCategories().stream()
-                .map(item -> item.toLowerCase(Locale.ROOT))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-        Set<String> excludeFilter = query.getExcludedCategories().stream()
-                .map(item -> item.toLowerCase(Locale.ROOT))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-
-        String trimmedFileFilter = StringUtils.hasText(query.getFilePath())
-                ? query.getFilePath().toLowerCase(Locale.ROOT)
-                : null;
-        String trimmedFileNameFilter = StringUtils.hasText(query.getFileName())
-                ? query.getFileName().toLowerCase(Locale.ROOT)
-                : null;
-
-        List<BlockItem> filtered = allBlocks.stream()
-                .filter(item -> filterByCategory(item, categoryFilter))
-                .filter(item -> filterByExcludedCategory(item, excludeFilter))
-                .filter(item -> filterByFilePath(item, trimmedFileFilter))
-                .filter(item -> filterByFileName(item, trimmedFileNameFilter))
-                .collect(Collectors.toList());
+        List<BlockItem> filtered = filterBlockItems(allBlocks, query);
 
         Map<String, List<BlockItem>> groupedByFile = new LinkedHashMap<>();
         for (BlockItem item : filtered) {
@@ -204,13 +193,12 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
                 .filter(Objects::nonNull)
                 .mapToLong(Integer::longValue)
                 .sum();
-        double ratio = 0d;
 
         Set<String> categoryKeys = filtered.stream()
                 .flatMap(item -> item.getCategories().stream())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        return new CodeBlockPage(pageItems, page, size, totalFiles, totalPages, categoryKeys, filtered.size(), totalLines, ratio);
+        return new CodeBlockPage(pageItems, page, size, totalFiles, totalPages, categoryKeys, filtered.size(), totalLines);
     }
 
     private boolean filterByCategory(BlockItem item, Set<String> filter) {
@@ -295,8 +283,35 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
             }
             pageIndex++;
         }
-        result.sort(Comparator.comparing(BlockItem::getFilePath, Comparator.nullsLast(String::compareTo)));
+        result.sort(BLOCK_ITEM_COMPARATOR);
         return result;
+    }
+
+    private List<BlockItem> filterBlockItems(List<BlockItem> source, CodeBlockQuery query) {
+        if (CollectionUtils.isEmpty(source)) {
+            return Collections.emptyList();
+        }
+        if (query == null) {
+            return new ArrayList<>(source);
+        }
+        Set<String> categoryFilter = query.getCategories().stream()
+                .map(item -> item.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<String> excludeFilter = query.getExcludedCategories().stream()
+                .map(item -> item.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        String trimmedFileFilter = StringUtils.hasText(query.getFilePath())
+                ? query.getFilePath().toLowerCase(Locale.ROOT)
+                : null;
+        String trimmedFileNameFilter = StringUtils.hasText(query.getFileName())
+                ? query.getFileName().toLowerCase(Locale.ROOT)
+                : null;
+        return source.stream()
+                .filter(item -> filterByCategory(item, categoryFilter))
+                .filter(item -> filterByExcludedCategory(item, excludeFilter))
+                .filter(item -> filterByFilePath(item, trimmedFileFilter))
+                .filter(item -> filterByFileName(item, trimmedFileNameFilter))
+                .collect(Collectors.toList());
     }
 
     private BlockItem toBlockItem(BlockDecisionSnapshot snapshot, BlockDecisionRecord record) {
@@ -361,11 +376,86 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
         return null;
     }
 
+    private long toLong(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        if (value instanceof String && StringUtils.hasText((String) value)) {
+            try {
+                return Long.parseLong(((String) value).trim());
+            } catch (NumberFormatException ex) {
+                return 0L;
+            }
+        }
+        return 0L;
+    }
+
     private void mergeCounts(Map<String, Long> target, Map<String, Integer> source) {
         if (source == null) {
             return;
         }
         source.forEach((key, value) -> target.merge(key, value == null ? 0L : value.longValue(), Long::sum));
+    }
+
+    private GitLineTotals extractGitLineTotals(DiffSnapshotDocument document) {
+        if (document == null) {
+            return GitLineTotals.EMPTY;
+        }
+        Map<String, Object> gitDiffContainer = document.getGitDiff();
+        if (gitDiffContainer == null || gitDiffContainer.isEmpty()) {
+            return GitLineTotals.EMPTY;
+        }
+        Object payloadObject = gitDiffContainer.get("gitDiff");
+        if (!(payloadObject instanceof Map)) {
+            return GitLineTotals.EMPTY;
+        }
+        Map<?, ?> payload = (Map<?, ?>) payloadObject;
+        long added = Math.max(0L, toLong(payload.get("addedLineCount")));
+        long removed = Math.max(0L, toLong(payload.get("removedLineCount")));
+        if (added == 0L && removed == 0L) {
+            GitLineTotals fromHunks = computeGitTotalsFromHunks(payload.get("hunks"));
+            if (!fromHunks.isEmpty()) {
+                return fromHunks;
+            }
+        }
+        return new GitLineTotals(added, removed);
+    }
+
+    private GitLineTotals computeGitTotalsFromHunks(Object hunksObject) {
+        if (!(hunksObject instanceof Iterable<?>)) {
+            return GitLineTotals.EMPTY;
+        }
+        long added = 0L;
+        long removed = 0L;
+        for (Object hunkObject : (Iterable<?>) hunksObject) {
+            if (!(hunkObject instanceof Map)) {
+                continue;
+            }
+            Map<?, ?> hunkMap = (Map<?, ?>) hunkObject;
+            Object linesObject = hunkMap.get("lines");
+            if (!(linesObject instanceof Iterable<?>)) {
+                continue;
+            }
+            for (Object lineObject : (Iterable<?>) linesObject) {
+                if (!(lineObject instanceof String)) {
+                    continue;
+                }
+                String line = (String) lineObject;
+                if (!StringUtils.hasText(line)) {
+                    continue;
+                }
+                char marker = line.charAt(0);
+                if (marker == '+') {
+                    added++;
+                } else if (marker == '-') {
+                    removed++;
+                }
+            }
+        }
+        if (added == 0L && removed == 0L) {
+            return GitLineTotals.EMPTY;
+        }
+        return new GitLineTotals(added, removed);
     }
 
     private String defaultComparisonId() {
@@ -395,14 +485,20 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
     public static final class CategoryMetrics {
         private final List<CategoryCount> categories;
         private final long totalLines;
-        private final double newCodeRatio;
         private final long totalBlocks;
+        private final long gitSourceChangedLines;
+        private final long gitTargetChangedLines;
 
-        public CategoryMetrics(List<CategoryCount> categories, long totalLines, double newCodeRatio, long totalBlocks) {
+        public CategoryMetrics(List<CategoryCount> categories,
+                               long totalLines,
+                               long totalBlocks,
+                               long gitSourceChangedLines,
+                               long gitTargetChangedLines) {
             this.categories = categories == null ? Collections.emptyList() : categories;
             this.totalLines = totalLines;
-            this.newCodeRatio = newCodeRatio;
             this.totalBlocks = totalBlocks;
+            this.gitSourceChangedLines = Math.max(0L, gitSourceChangedLines);
+            this.gitTargetChangedLines = Math.max(0L, gitTargetChangedLines);
         }
 
         public List<CategoryCount> getCategories() {
@@ -413,12 +509,39 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
             return totalLines;
         }
 
-        public double getNewCodeRatio() {
-            return newCodeRatio;
-        }
-
         public long getTotalBlocks() {
             return totalBlocks;
+        }
+
+        public long getGitSourceChangedLines() {
+            return gitSourceChangedLines;
+        }
+
+        public long getGitTargetChangedLines() {
+            return gitTargetChangedLines;
+        }
+    }
+
+    private static final class GitLineTotals {
+        private static final GitLineTotals EMPTY = new GitLineTotals(0L, 0L);
+        private final long addedLines;
+        private final long removedLines;
+
+        private GitLineTotals(long addedLines, long removedLines) {
+            this.addedLines = Math.max(0L, addedLines);
+            this.removedLines = Math.max(0L, removedLines);
+        }
+
+        private boolean isEmpty() {
+            return addedLines == 0L && removedLines == 0L;
+        }
+
+        private long getAddedLines() {
+            return addedLines;
+        }
+
+        private long getRemovedLines() {
+            return removedLines;
         }
     }
 
@@ -461,7 +584,6 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
         private final Set<String> categoryKeys;
         private final long totalBlocks;
         private final long totalLines;
-        private final double newCodeRatio;
 
         public CodeBlockPage(List<BlockItem> items,
                              int page,
@@ -470,8 +592,7 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
                              int totalPages,
                              Set<String> categoryKeys,
                              long totalBlocks,
-                             long totalLines,
-                             double newCodeRatio) {
+                             long totalLines) {
             this.items = items == null ? Collections.emptyList() : items;
             this.page = page;
             this.size = size;
@@ -480,7 +601,6 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
             this.categoryKeys = categoryKeys == null ? Collections.emptySet() : categoryKeys;
             this.totalBlocks = totalBlocks;
             this.totalLines = totalLines;
-            this.newCodeRatio = newCodeRatio;
         }
 
         public List<BlockItem> getItems() {
@@ -514,10 +634,6 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
         public long getTotalLines() {
             return totalLines;
         }
-
-        public double getNewCodeRatio() {
-            return newCodeRatio;
-        }
     }
 
     public BlockItem findBlockDetail(String comparisonId, String blockId) {
@@ -548,6 +664,79 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
             }
         }
         return null;
+    }
+
+    public BlockContext findBlockContext(String comparisonId, String blockId) {
+        return findBlockContext(comparisonId, blockId, null);
+    }
+
+    public BlockContext findBlockContext(String comparisonId, String blockId, CodeBlockQuery query) {
+        if (!StringUtils.hasText(blockId)) {
+            return null;
+        }
+        BlockItem current = findBlockDetail(comparisonId, blockId);
+        if (current == null) {
+            current = findBlockDetailAcrossProjects(blockId);
+        }
+        if (current == null) {
+            return null;
+        }
+        String resolvedComparisonId = StringUtils.hasText(current.getComparisonId())
+                ? current.getComparisonId()
+                : (StringUtils.hasText(comparisonId) ? comparisonId : defaultComparisonId());
+        List<BlockItem> items = loadAllBlockItems(resolvedComparisonId);
+        if (CollectionUtils.isEmpty(items)) {
+            return new BlockContext(current, null, null);
+        }
+        List<BlockItem> filtered = query == null
+                ? new ArrayList<>(items)
+                : new ArrayList<>(filterBlockItems(items, query));
+        if (filtered.isEmpty()) {
+            filtered.add(current);
+        } else if (filtered.stream().noneMatch(candidate -> blockId.equals(candidate.getId()))) {
+            filtered.add(current);
+        }
+        filtered.sort(BLOCK_ITEM_COMPARATOR);
+        BlockItem previous = null;
+        BlockItem next = null;
+        for (int index = 0; index < filtered.size(); index++) {
+            BlockItem candidate = filtered.get(index);
+            if (!blockId.equals(candidate.getId())) {
+                continue;
+            }
+            if (index > 0) {
+                previous = filtered.get(index - 1);
+            }
+            if (index < filtered.size() - 1) {
+                next = filtered.get(index + 1);
+            }
+            break;
+        }
+        return new BlockContext(current, previous, next);
+    }
+
+    public static final class BlockContext {
+        private final BlockItem current;
+        private final BlockItem previous;
+        private final BlockItem next;
+
+        public BlockContext(BlockItem current, BlockItem previous, BlockItem next) {
+            this.current = current;
+            this.previous = previous;
+            this.next = next;
+        }
+
+        public BlockItem getCurrent() {
+            return current;
+        }
+
+        public BlockItem getPrevious() {
+            return previous;
+        }
+
+        public BlockItem getNext() {
+            return next;
+        }
     }
 
     public static final class BlockItem {

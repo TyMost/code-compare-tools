@@ -1,5 +1,6 @@
 package com.example.codecompare.rebuild.agent;
 
+import com.example.codecompare.rebuild.agent.config.MigrationAnnotationProperties;
 import com.example.codecompare.rebuild.agent.migration.FileMigrationGroup;
 import com.example.codecompare.rebuild.agent.migration.MigrationCandidate;
 import com.example.codecompare.rebuild.agent.migration.MigrationGroupingService;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -32,10 +34,8 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 
 import static com.example.codecompare.rebuild.agent.migration.CodeBlockMigrationConstants.LABEL_ANNOTATED;
-import static com.example.codecompare.rebuild.agent.migration.CodeBlockMigrationConstants.LABEL_MIGRATED;
 import static com.example.codecompare.rebuild.agent.migration.CodeBlockMigrationConstants.METADATA_TEMPLATE_KEY;
 import static com.example.codecompare.rebuild.agent.migration.CodeBlockMigrationConstants.RISK_ANNOTATED;
-import static com.example.codecompare.rebuild.agent.migration.CodeBlockMigrationConstants.RISK_MIGRATED;
 import static com.example.codecompare.rebuild.agent.migration.CodeBlockMigrationConstants.STAGE_ANNOTATED;
 import static com.example.codecompare.rebuild.agent.migration.CodeBlockMigrationConstants.STAGE_APPLIED;
 import static com.example.codecompare.rebuild.agent.migration.CodeBlockMigrationConstants.STAGE_UNDO;
@@ -63,13 +63,15 @@ public class CodeBlockMigrationService {
     private final DiffSynchronizationService diffSynchronizationService;
     private final MigrationGroupingService migrationGroupingService;
     private final ConcurrentHashMap<String, ReentrantLock> fileLocks = new ConcurrentHashMap<String, ReentrantLock>();
+    private final boolean replacementEnabled;
 
     public CodeBlockMigrationService(BlockStatsService blockStatsService,
                                      BlockDecisionRepository blockDecisionRepository,
                                      AnnotationRenderingService annotationRenderingService,
                                      BlockDecisionMutationService blockDecisionMutationService,
                                      AnnotatedFileWriter annotatedFileWriter,
-                                     DiffSynchronizationService diffSynchronizationService) {
+                                     DiffSynchronizationService diffSynchronizationService,
+                                     MigrationAnnotationProperties migrationAnnotationProperties) {
         this.blockStatsService = blockStatsService;
         this.blockDecisionRepository = blockDecisionRepository;
         this.annotationRenderingService = annotationRenderingService;
@@ -77,6 +79,8 @@ public class CodeBlockMigrationService {
         this.annotatedFileWriter = annotatedFileWriter;
         this.diffSynchronizationService = diffSynchronizationService;
         this.migrationGroupingService = new MigrationGroupingService();
+        this.replacementEnabled = migrationAnnotationProperties == null
+                || migrationAnnotationProperties.isEnableReplacementMode();
     }
 
     /**
@@ -338,19 +342,8 @@ public class CodeBlockMigrationService {
                         BlockDiff diffForWrite = BlockDiff.from(baseDiff)
                                 .targetStartLine(referenceStartLine > 0 ? referenceStartLine : baseDiff.getTargetStartLine())
                                 .build();
-                        InsertionResult insertionResult = annotatedFileWriter.writeAnnotatedWithReplacement(
-                                candidate.getDetail(),
-                                candidate.getAnnotatedCode(),
-                                diffForWrite,
-                                referenceStartLine,
-                                expectedOriginal);
-                        if (insertionResult.isSkipped()) {
-                            log.warn("跳过迁移写入，未找到原始实现片段 blockId={} file={}",
-                                    candidate.getBlockId(),
-                                    candidate.getDetail() == null ? null : candidate.getDetail().getFilePath());
-                            failures.add(candidate.getBlockId() + ": 未找到原始实现片段，已跳过自动替换");
-                            continue;
-                        }
+                        InsertionResult insertionResult = applyAnnotatedContent(candidate, diffForWrite,
+                                referenceStartLine, expectedOriginal);
                         BlockDiff appliedDiff = BlockDiff.from(diffForWrite)
                                 .targetStartLine(insertionResult.getStartLine() > 0 ? insertionResult.getStartLine() : referenceStartLine)
                                 .build();
@@ -361,8 +354,8 @@ public class CodeBlockMigrationService {
                                         return blockDecisionMutationService.buildUpdatedRecord(
                                                 blockDecisionMutationService.withDiff(blockRecord, appliedDiff),
                                                 candidate.getAnnotatedCode(),
-                                                LABEL_MIGRATED,
-                                                RISK_MIGRATED,
+                                                null,
+                                                null,
                                                 null,
                                                 null,
                                                 STAGE_APPLIED);
@@ -495,6 +488,51 @@ public class CodeBlockMigrationService {
                     candidate.getBlockId(), filePath, templateKey, result.getStartLine(), result.getInsertedLines(),
                     result.getReplacedLines(), result.preview());
         }
+    }
+
+    private InsertionResult applyAnnotatedContent(MigrationCandidate candidate,
+                                                  BlockDiff diffForWrite,
+                                                  int referenceStartLine,
+                                                  List<String> expectedOriginal) throws IOException {
+        boolean useReplacement = replacementEnabled && hasNonBlankLine(expectedOriginal);
+        InsertionResult insertionResult;
+        if (useReplacement) {
+            insertionResult = annotatedFileWriter.writeAnnotatedWithReplacement(
+                    candidate.getDetail(),
+                    candidate.getAnnotatedCode(),
+                    diffForWrite,
+                    referenceStartLine,
+                    expectedOriginal);
+            if (insertionResult.isSkipped()) {
+                log.debug("替换模式未命中原始片段，回退为插入模式 blockId={} file={}",
+                        candidate.getBlockId(),
+                        candidate.getDetail() == null ? null : candidate.getDetail().getFilePath());
+                insertionResult = annotatedFileWriter.writeAnnotatedToFile(
+                        candidate.getDetail(),
+                        candidate.getAnnotatedCode(),
+                        diffForWrite,
+                        referenceStartLine);
+            }
+        } else {
+            insertionResult = annotatedFileWriter.writeAnnotatedToFile(
+                    candidate.getDetail(),
+                    candidate.getAnnotatedCode(),
+                    diffForWrite,
+                    referenceStartLine);
+        }
+        return insertionResult;
+    }
+
+    private boolean hasNonBlankLine(List<String> lines) {
+        if (CollectionUtils.isEmpty(lines)) {
+            return false;
+        }
+        for (String line : lines) {
+            if (StringUtils.hasText(line)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private int resolveCandidateLine(MigrationCandidate candidate) {

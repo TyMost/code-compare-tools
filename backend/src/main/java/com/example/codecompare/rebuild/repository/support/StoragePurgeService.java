@@ -5,6 +5,7 @@ import com.example.codecompare.rebuild.repository.BlockDecisionRepository;
 import com.example.codecompare.rebuild.repository.DiffSnapshotRepository;
 import com.example.codecompare.rebuild.repository.FileMetadataRepository;
 import com.example.codecompare.rebuild.repository.config.StorageProperties;
+import com.example.codecompare.rebuild.repository.filesystem.StorageFileHelper;
 import com.example.codecompare.rebuild.scanning.ScanResultRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +16,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.List;
 import java.util.stream.Stream;
 
 /**
@@ -64,13 +66,25 @@ public class StoragePurgeService {
         scanResultRepository.deleteSummary(trimmed);
 
         diffSnapshotRepository.deleteAll(trimmed);
-        deleteDirectory(storageProperties.resolveDiffSnapshots().resolve(safeSegment(trimmed)));
+        List<Path> diffDirectories = StorageFileHelper.findComparisonDirectories(
+                storageProperties.resolveDiffSnapshots(), trimmed);
+        for (Path directory : diffDirectories) {
+            deleteDirectory(directory);
+        }
 
         blockDecisionRepository.deleteAll(trimmed);
-        deleteDirectory(storageProperties.resolveBlockDecisions().resolve(safeSegment(trimmed)));
+        List<Path> blockDirectories = StorageFileHelper.findComparisonDirectories(
+                storageProperties.resolveBlockDecisions(), trimmed);
+        for (Path directory : blockDirectories) {
+            deleteDirectory(directory);
+        }
 
         agentSuggestionRepository.deleteAll(trimmed);
-        deleteDirectory(storageProperties.resolveAgentSuggestions().resolve(safeSegment(trimmed)));
+        List<Path> agentDirectories = StorageFileHelper.findComparisonDirectories(
+                storageProperties.resolveAgentSuggestions(), trimmed);
+        for (Path directory : agentDirectories) {
+            deleteDirectory(directory);
+        }
     }
 
     private Path resolveMetadataFile(String projectCode) {

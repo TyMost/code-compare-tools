@@ -32,7 +32,7 @@ public class MigrationViewMapper {
     public MigrationOverviewView toOverviewView(DashboardOverviewDTO source,
                                                 ConfigurationReloadReport configReport) {
         if (source == null) {
-            return new MigrationOverviewView(null, null, null, null, Collections.emptyList(), 0d, 0L, 0L, toConfigSyncView(configReport));
+            return new MigrationOverviewView(null, null, null, null, Collections.emptyList(), "default", 0L, 0L, 0L, 0L, toConfigSyncView(configReport));
         }
         return new MigrationOverviewView(
                 source.getProjectCode(),
@@ -40,7 +40,9 @@ public class MigrationViewMapper {
                 source.getNewProjectPath(),
                 source.getLastSyncedAt(),
                 source.getCodeCategoryStats(),
-                source.getNewCodeRatio(),
+                source.getDiffEngine(),
+                source.getGitSourceChangedLines(),
+                source.getGitTargetChangedLines(),
                 source.getTotalLines(),
                 source.getTotalBlocks(),
                 toConfigSyncView(configReport)
@@ -50,7 +52,7 @@ public class MigrationViewMapper {
     public CodeBlockListView toBlockListView(BlockStatsResponseDTO source) {
         if (source == null) {
             return new CodeBlockListView(Collections.emptyList(), 1, 20, 0L, 0,
-                    Collections.emptyList(), 0d, 0L);
+                    Collections.emptyList(), 0L);
         }
         List<CodeBlockItemView> items = CollectionUtils.isEmpty(source.getData())
                 ? Collections.emptyList()
@@ -64,7 +66,6 @@ public class MigrationViewMapper {
                 source.getTotal(),
                 source.getTotalPages(),
                 source.getCategoryOptions(),
-                source.getNewCodeRatio(),
                 source.getTotalLines()
         );
     }
@@ -86,7 +87,9 @@ public class MigrationViewMapper {
                 source.getStatus(),
                 source.getStatusLabel(),
                 source.getCategoryKeys(),
-                source.isAiSuggestionEnabled()
+                source.isAiSuggestionEnabled(),
+                source.getPreviousId(),
+                source.getNextId()
         );
     }
 

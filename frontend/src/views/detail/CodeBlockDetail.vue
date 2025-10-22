@@ -4,7 +4,11 @@
       :file-path="detail?.filePath"
       :line-range="lineRange"
       :categories="headerCategories"
+      :previous-id="detail?.previousId"
+      :next-id="detail?.nextId"
       @back="handleBack"
+      @previous="handlePrevious"
+      @next="handleNext"
     />
 
     <action-bar
@@ -109,11 +113,7 @@ export default {
       }
     },
     handleBack() {
-      if (window.history.length > 1) {
-        this.$router.back();
-      } else {
-        this.$router.push({ name: 'Dashboard' });
-      }
+      this.$router.push({ name: 'Dashboard' });
     },
     async executeDetailAction(type, payload) {
       this.actionLoading = true;
@@ -138,6 +138,20 @@ export default {
     },
     handleIgnore(payload) {
       this.executeDetailAction('ignore', payload);
+    },
+    handlePrevious() {
+      const target = this.detail?.previousId;
+      this.navigateToDetail(target);
+    },
+    handleNext() {
+      const target = this.detail?.nextId;
+      this.navigateToDetail(target);
+    },
+    navigateToDetail(targetId) {
+      if (!targetId || targetId === this.id) {
+        return;
+      }
+      this.$router.push({ name: 'CodeBlockDetail', params: { id: targetId } });
     },
     detectLanguage(filePath) {
       if (!filePath) {

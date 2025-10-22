@@ -10,6 +10,7 @@ import com.example.codecompare.rebuild.repository.filesystem.FileSystemBlockDeci
 import com.example.codecompare.rebuild.repository.filesystem.FileSystemDiffSnapshotRepository;
 import com.example.codecompare.rebuild.repository.filesystem.FileSystemFileMetadataRepository;
 import com.example.codecompare.rebuild.repository.filesystem.FileSystemScanResultRepository;
+import com.example.codecompare.rebuild.repository.filesystem.StorageFileHelper;
 import com.example.codecompare.rebuild.repository.model.AgentSuggestionRecord;
 import com.example.codecompare.rebuild.repository.model.BlockDecisionRecord;
 import com.example.codecompare.rebuild.repository.model.BlockDecisionSnapshot;
@@ -129,13 +130,12 @@ class StoragePurgeServiceTest {
 
         String safeSegment = project.replaceAll("[^a-zA-Z0-9._-]", "_");
         Path metadataFile = storageProperties.resolveFileMetadata().resolve(safeSegment + ".json");
-        Path diffDirectory = storageProperties.resolveDiffSnapshots().resolve(safeSegment);
-        Path blockDirectory = storageProperties.resolveBlockDecisions().resolve(safeSegment);
-        Path agentDirectory = storageProperties.resolveAgentSuggestions().resolve(safeSegment);
-
         assertThat(Files.exists(metadataFile)).isFalse();
-        assertThat(Files.exists(diffDirectory)).isFalse();
-        assertThat(Files.exists(blockDirectory)).isFalse();
-        assertThat(Files.exists(agentDirectory)).isFalse();
+        assertThat(StorageFileHelper.findComparisonDirectories(
+                storageProperties.resolveDiffSnapshots(), project)).isEmpty();
+        assertThat(StorageFileHelper.findComparisonDirectories(
+                storageProperties.resolveBlockDecisions(), project)).isEmpty();
+        assertThat(StorageFileHelper.findComparisonDirectories(
+                storageProperties.resolveAgentSuggestions(), project)).isEmpty();
     }
 }

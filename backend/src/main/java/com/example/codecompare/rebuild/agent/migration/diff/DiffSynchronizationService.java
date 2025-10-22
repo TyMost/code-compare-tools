@@ -10,6 +10,7 @@ import com.example.codecompare.rebuild.diff.DiffService;
 import com.example.codecompare.rebuild.repository.model.BlockDecisionRecord;
 import com.example.codecompare.rebuild.repository.model.BlockDecisionSnapshot;
 import com.example.codecompare.rebuild.scanning.BlockDiffLabeler;
+import com.example.codecompare.rebuild.scanning.BlockLabelConstants;
 import com.example.codecompare.rebuild.stats.CodeBlockDetailDTO;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
@@ -218,17 +219,89 @@ public class DiffSynchronizationService {
     }
 
     private BlockDecisionRecord withDiff(BlockDecisionRecord original, BlockDiff diff) {
+        List<String> labelIds = sanitizeLabelList(diff == null ? null : diff.getLabelIds());
+        List<String> labels = sanitizeLabelList(diff == null ? null : diff.getLabels());
+        BlockDiff normalizedDiff = diff;
+        if (diff != null) {
+            normalizedDiff = BlockDiff.from(diff)
+                    .labelIds(labelIds)
+                    .labels(labels)
+                    .build();
+        }
+        String resolvedStatus = resolveStatusFromDiff(normalizedDiff, original.getStatus());
+        if (!StringUtils.hasText(resolvedStatus)) {
+            resolvedStatus = BlockLabelConstants.STATUS_NO_RULES;
+        }
+        String resolvedRisk = resolveLabelFromDiff(normalizedDiff, original.getRiskLevel());
+        if (!StringUtils.hasText(resolvedRisk)) {
+            resolvedRisk = resolvedStatus;
+        }
         return BlockDecisionRecord.builder()
                 .id(original.getId())
                 .comparisonId(original.getComparisonId())
                 .filePath(original.getFilePath())
                 .blockIdentifier(original.getBlockIdentifier())
-                .status(original.getStatus())
-                .riskLevel(original.getRiskLevel())
+                .status(resolvedStatus)
+                .riskLevel(resolvedRisk)
                 .action(original.getAction())
                 .metadata(original.getMetadata())
-                .diff(diff)
+                .diff(normalizedDiff)
                 .analyzedAt(original.getAnalyzedAt())
                 .build();
+    }
+
+    private List<String> sanitizeLabelList(List<String> source) {
+        List<String> result = new ArrayList<String>();
+        if (CollectionUtils.isEmpty(source)) {
+            return result;
+        }
+        for (String item : source) {
+            if (!StringUtils.hasText(item)) {
+                continue;
+            }
+            String normalized = item.trim();
+            boolean exists = false;
+            for (String existing : result) {
+                if (existing != null && normalized.equalsIgnoreCase(existing.trim())) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                result.add(normalized);
+            }
+        }
+        return result;
+    }
+
+    private String resolveStatusFromDiff(BlockDiff diff, String fallback) {
+        if (diff != null) {
+            BlockDiff.LabelDescriptor primary = diff.getPrimaryLabel();
+            if (primary != null && StringUtils.hasText(primary.getStatusKey())) {
+                return primary.getStatusKey();
+            }
+            List<String> ids = diff.getLabelIds();
+            if (!CollectionUtils.isEmpty(ids)) {
+                return ids.get(0);
+            }
+        }
+        return fallback;
+    }
+
+    private String resolveLabelFromDiff(BlockDiff diff, String fallback) {
+        if (diff != null) {
+            BlockDiff.LabelDescriptor primary = diff.getPrimaryLabel();
+            if (primary != null && StringUtils.hasText(primary.getLabelName())) {
+                return primary.getLabelName();
+            }
+            if (primary != null && StringUtils.hasText(primary.getLabelId())) {
+                return primary.getLabelId();
+            }
+            List<String> labels = diff.getLabels();
+            if (!CollectionUtils.isEmpty(labels)) {
+                return labels.get(0);
+            }
+        }
+        return fallback;
     }
 }

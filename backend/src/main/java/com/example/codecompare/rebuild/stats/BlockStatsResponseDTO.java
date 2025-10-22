@@ -15,7 +15,6 @@ public final class BlockStatsResponseDTO {
     private final long total;
     private final int totalPages;
     private final List<CategoryFilterDTO> categoryOptions;
-    private final double newCodeRatio;
     private final long totalLines;
 
     public BlockStatsResponseDTO(List<CodeBlockItemDTO> data,
@@ -24,7 +23,6 @@ public final class BlockStatsResponseDTO {
                                  long total,
                                  int totalPages,
                                  List<CategoryFilterDTO> categoryOptions,
-                                 double newCodeRatio,
                                  long totalLines) {
         this.data = data == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(data));
         this.page = page;
@@ -34,7 +32,6 @@ public final class BlockStatsResponseDTO {
         this.categoryOptions = categoryOptions == null
                 ? Collections.emptyList()
                 : Collections.unmodifiableList(new ArrayList<>(categoryOptions));
-        this.newCodeRatio = newCodeRatio;
         this.totalLines = totalLines;
     }
 
@@ -60,10 +57,6 @@ public final class BlockStatsResponseDTO {
 
     public List<CategoryFilterDTO> getCategoryOptions() {
         return categoryOptions;
-    }
-
-    public double getNewCodeRatio() {
-        return newCodeRatio;
     }
 
     public long getTotalLines() {

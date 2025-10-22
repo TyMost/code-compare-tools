@@ -21,6 +21,8 @@ public class CodeBlockDetailView {
     private final String statusLabel;
     private final List<String> categoryKeys;
     private final boolean aiSuggestionEnabled;
+    private final String previousId;
+    private final String nextId;
 
     public CodeBlockDetailView(String id,
                                String comparisonId,
@@ -34,7 +36,9 @@ public class CodeBlockDetailView {
                                String status,
                                String statusLabel,
                                List<String> categoryKeys,
-                               boolean aiSuggestionEnabled) {
+                               boolean aiSuggestionEnabled,
+                               String previousId,
+                               String nextId) {
         this.id = id;
         this.comparisonId = comparisonId;
         this.sourceProjectCode = sourceProjectCode;
@@ -48,6 +52,8 @@ public class CodeBlockDetailView {
         this.statusLabel = statusLabel;
         this.categoryKeys = categoryKeys == null ? Collections.emptyList() : Collections.unmodifiableList(categoryKeys);
         this.aiSuggestionEnabled = aiSuggestionEnabled;
+        this.previousId = previousId;
+        this.nextId = nextId;
     }
 
     public String getId() {
@@ -100,5 +106,13 @@ public class CodeBlockDetailView {
 
     public boolean isAiSuggestionEnabled() {
         return aiSuggestionEnabled;
+    }
+
+    public String getPreviousId() {
+        return previousId;
+    }
+
+    public String getNextId() {
+        return nextId;
     }
 }

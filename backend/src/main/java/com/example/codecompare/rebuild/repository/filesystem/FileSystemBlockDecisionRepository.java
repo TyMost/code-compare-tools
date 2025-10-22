@@ -131,8 +131,11 @@ public class FileSystemBlockDecisionRepository implements BlockDecisionRepositor
                 state.lock.writeLock().unlock();
             }
         }
-        Path directory = properties.resolveBlockDecisions().resolve(safeSegment(comparisonId));
-        deleteDirectory(directory);
+        List<Path> directories = StorageFileHelper.findComparisonDirectories(
+                properties.resolveBlockDecisions(), comparisonId);
+        for (Path directory : directories) {
+            deleteDirectory(directory);
+        }
     }
 
     @Override
@@ -178,7 +181,12 @@ public class FileSystemBlockDecisionRepository implements BlockDecisionRepositor
         if (Files.exists(base)) {
             try (Stream<Path> stream = Files.list(base)) {
                 stream.filter(Files::isDirectory)
-                        .map(path -> path.getFileName() == null ? null : path.getFileName().toString())
+                        .map(path -> {
+                            if (path.getFileName() == null) {
+                                return null;
+                            }
+                            return StorageFileHelper.normalizeComparisonDirectoryName(path.getFileName().toString());
+                        })
                         .filter(item -> item != null && !item.isEmpty())
                         .forEach(identifiers::add);
             } catch (IOException ex) {
@@ -244,21 +252,26 @@ public class FileSystemBlockDecisionRepository implements BlockDecisionRepositor
     }
 
     private void tryLoadFromDisk(String comparisonId, Collection<BlockDecisionSnapshot> target) {
-        Path base = properties.resolveBlockDecisions().resolve(safeSegment(comparisonId));
-        if (!Files.exists(base)) {
+        List<Path> directories = StorageFileHelper.findComparisonDirectories(
+                properties.resolveBlockDecisions(), comparisonId);
+        if (directories.isEmpty()) {
             return;
         }
-        try {
-            Files.list(base)
-                    .filter(Files::isRegularFile)
-                    .forEach(path -> {
-                        StoredSnapshots stored = JsonStore.read(path, objectMapper, TYPE);
-                        if (stored != null && stored.snapshots != null) {
-                            target.addAll(stored.snapshots);
-                        }
-                    });
-        } catch (IOException ex) {
-            throw new IllegalStateException("Failed to read snapshot directory: " + base, ex);
+        for (Path directory : directories) {
+            if (!Files.exists(directory)) {
+                continue;
+            }
+            try (Stream<Path> files = Files.list(directory)) {
+                files.filter(Files::isRegularFile)
+                        .forEach(path -> {
+                            StoredSnapshots stored = JsonStore.read(path, objectMapper, TYPE);
+                            if (stored != null && stored.snapshots != null) {
+                                target.addAll(stored.snapshots);
+                            }
+                        });
+            } catch (IOException ex) {
+                throw new IllegalStateException("Failed to read snapshot directory: " + directory, ex);
+            }
         }
     }
 
@@ -300,13 +313,6 @@ public class FileSystemBlockDecisionRepository implements BlockDecisionRepositor
         } catch (IOException ex) {
             throw new IllegalStateException("Failed to delete snapshot directory: " + directory, ex);
         }
-    }
-
-    private String safeSegment(String raw) {
-        if (raw == null) {
-            return "default";
-        }
-        return raw.replaceAll("[^a-zA-Z0-9._-]", "_");
     }
 
     private static final class SnapshotState {

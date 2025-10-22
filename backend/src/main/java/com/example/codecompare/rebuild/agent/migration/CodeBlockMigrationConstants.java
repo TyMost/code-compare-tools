@@ -10,7 +10,7 @@ public final class CodeBlockMigrationConstants {
 
     public static final String LABEL_ANNOTATED = "migrated_with_annotation";
     public static final String LABEL_MIGRATED = "migrated";
-    public static final String RISK_ANNOTATED = "Annotated";
+    public static final String RISK_ANNOTATED = "已生成待应用";
     public static final String RISK_MIGRATED = "Migrated";
     public static final String STAGE_ANNOTATED = "annotated_copy";
     public static final String STAGE_APPLIED = "applied";
@@ -24,4 +24,3 @@ public final class CodeBlockMigrationConstants {
     public static final String METADATA_UNDO_TIMESTAMP = "undoPerformedAt";
     public static final String METADATA_TEMPLATE_KEY = "annotationTemplateKey";
 }
-

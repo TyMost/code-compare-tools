@@ -32,9 +32,9 @@ public class ScanProperties {
     private boolean markSyntheticMigrated = true;
     private long gitMaxDiffBytes = 512 * 1024; // 512 KiB default payload limit
     private long gitMaxFileSizeBytes = 2 * 1024 * 1024; // 2 MiB guardrail
-    private boolean autoScanOnStartup = true;
     private boolean gitFetchMissingRefs = false;
     private String gitRemoteName = "origin";
+    private boolean transientPersist = true;
 
     public int getFingerprintThreads() {
         return fingerprintThreads;
@@ -174,14 +174,6 @@ public class ScanProperties {
         this.gitMaxFileSizeBytes = gitMaxFileSizeBytes <= 0 ? 2 * 1024 * 1024 : gitMaxFileSizeBytes;
     }
 
-    public boolean isAutoScanOnStartup() {
-        return autoScanOnStartup;
-    }
-
-    public void setAutoScanOnStartup(boolean autoScanOnStartup) {
-        this.autoScanOnStartup = autoScanOnStartup;
-    }
-
     public boolean isGitFetchMissingRefs() {
         return gitFetchMissingRefs;
     }
@@ -196,5 +188,13 @@ public class ScanProperties {
 
     public void setGitRemoteName(String gitRemoteName) {
         this.gitRemoteName = StringUtils.hasText(gitRemoteName) ? gitRemoteName.trim() : "origin";
+    }
+
+    public boolean isTransientPersist() {
+        return transientPersist;
+    }
+
+    public void setTransientPersist(boolean transientPersist) {
+        this.transientPersist = transientPersist;
     }
 }

@@ -35,10 +35,15 @@
         <category-donut :stats="overview?.codeCategoryStats || []" />
       </el-col>
       <el-col :span="12">
-        <new-code-ratio-card
-          :ratio="overview?.newCodeRatio || 0"
-          :total-lines="overview?.totalLines || 0"
+        <git-change-summary-card
+          v-if="isGitMode"
+          :source-lines="gitSourceLines"
+          :target-lines="gitTargetLines"
+          :diff-engine="overview?.diffEngine || 'default'"
         />
+        <div v-else class="empty-card">
+          <span>仅 Git 模式显示行数对比</span>
+        </div>
       </el-col>
     </el-row>
 
@@ -74,7 +79,7 @@
 import { mapState, mapGetters } from 'vuex';
 import DashboardHeader from '@/components/dashboard/DashboardHeader.vue';
 import CategoryDonut from '@/components/dashboard/CategoryDonut.vue';
-import NewCodeRatioCard from '@/components/dashboard/NewCodeRatioCard.vue';
+import GitChangeSummaryCard from '@/components/dashboard/GitChangeSummaryCard.vue';
 import BatchToolbar from '@/components/dashboard/BatchToolbar.vue';
 import CodeBlockTable from '@/views/dashboard/CodeBlockTable.vue';
 import { formatDateTime } from '@/utils/date';
@@ -84,7 +89,7 @@ export default {
   components: {
     DashboardHeader,
     CategoryDonut,
-    NewCodeRatioCard,
+    GitChangeSummaryCard,
     BatchToolbar,
     CodeBlockTable,
   },
@@ -118,6 +123,16 @@ export default {
     },
     fileNameFilter() {
       return this.fileNameFilterState;
+    },
+    isGitMode() {
+      const engine = (this.overview?.diffEngine || '').trim().toLowerCase();
+      return engine === 'git';
+    },
+    gitSourceLines() {
+      return Number(this.overview?.gitSourceChangedLines || 0);
+    },
+    gitTargetLines() {
+      return Number(this.overview?.gitTargetChangedLines || 0);
     },
     projectPaths() {
       if (!this.overview) {
@@ -295,6 +310,19 @@ export default {
 
 .metrics-row {
   margin-bottom: 16px;
+}
+
+.empty-card {
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(31, 56, 88, 0.08);
+  padding: 16px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+  font-size: 14px;
 }
 </style>
 

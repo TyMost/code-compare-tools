@@ -47,10 +47,6 @@ public class DemoDataInitializer {
         if (!initialized.compareAndSet(false, true)) {
             return;
         }
-        if (!scanProperties.isAutoScanOnStartup()) {
-            log.info("Skipping demo full scan because auto-scan-on-startup is disabled.");
-            return;
-        }
         List<ProjectRootRegistry.ProjectRootDescriptor> sources = projectRootRegistry.getSources();
         List<ProjectRootRegistry.ProjectRootDescriptor> targets = projectRootRegistry.getTargets();
         if (CollectionUtils.isEmpty(sources) || CollectionUtils.isEmpty(targets)) {
@@ -60,9 +56,15 @@ public class DemoDataInitializer {
         if (scanResultRepository.findLatestSummary(defaultProjectCode).isPresent()) {
             return;
         }
+        boolean gitDiffEngine = "git".equalsIgnoreCase(scanProperties.getDiffEngine());
         try {
-            log.info("首次启动未检测到示例扫描结果，自动执行全量扫描...");
-            fileScanService.scanAll(null);
+            if (gitDiffEngine) {
+                log.info("首次启动未检测到示例扫描结果，自动执行增量扫描...");
+                fileScanService.scanIncremental((ProjectScanRequest) null);
+            } else {
+                log.info("首次启动未检测到示例扫描结果，自动执行全量扫描...");
+                fileScanService.scanAll(null);
+            }
         } catch (Exception ex) {
             log.warn("自动扫描示例项目失败", ex);
         }

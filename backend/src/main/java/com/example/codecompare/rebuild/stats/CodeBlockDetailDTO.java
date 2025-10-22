@@ -22,6 +22,8 @@ public final class CodeBlockDetailDTO {
     private final String statusLabel;
     private final List<String> categoryKeys;
     private final boolean aiSuggestionEnabled;
+    private final String previousId;
+    private final String nextId;
 
     public CodeBlockDetailDTO(String id,
                               String comparisonId,
@@ -35,7 +37,9 @@ public final class CodeBlockDetailDTO {
                               String status,
                               String statusLabel,
                               List<String> categoryKeys,
-                              boolean aiSuggestionEnabled) {
+                              boolean aiSuggestionEnabled,
+                              String previousId,
+                              String nextId) {
         this.id = id;
         this.comparisonId = comparisonId;
         this.sourceProjectCode = sourceProjectCode;
@@ -51,6 +55,8 @@ public final class CodeBlockDetailDTO {
                 ? Collections.emptyList()
                 : Collections.unmodifiableList(new ArrayList<>(categoryKeys));
         this.aiSuggestionEnabled = aiSuggestionEnabled;
+        this.previousId = previousId;
+        this.nextId = nextId;
     }
 
     public String getId() {
@@ -103,5 +109,13 @@ public final class CodeBlockDetailDTO {
 
     public boolean isAiSuggestionEnabled() {
         return aiSuggestionEnabled;
+    }
+
+    public String getPreviousId() {
+        return previousId;
+    }
+
+    public String getNextId() {
+        return nextId;
     }
 }

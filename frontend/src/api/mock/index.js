@@ -205,10 +205,14 @@ function buildOverview() {
     color: status.color,
     count: blocks.filter((block) => block.status === status.key).length,
   }));
+  const sourceChangedLines = Math.max(totalLines - newLines, 0);
+  const targetChangedLines = newLines;
   return {
     ...projectInfo,
     totalLines,
-    newCodeRatio: totalLines ? Number((newLines / totalLines).toFixed(4)) : 0,
+    diffEngine: 'git',
+    gitSourceChangedLines: sourceChangedLines,
+    gitTargetChangedLines: targetChangedLines,
     codeCategoryStats,
     codeBlockStatusStats,
     lastSyncedAt: blocks.reduce((latest, item) => {

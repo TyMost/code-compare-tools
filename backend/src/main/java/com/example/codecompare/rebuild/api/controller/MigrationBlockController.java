@@ -87,9 +87,40 @@ public class MigrationBlockController {
     @GetMapping("/code-blocks/{id}")
     public ApiResponse<CodeBlockDetailView> blockDetail(
             @PathVariable("id") String blockId,
-            @RequestParam(value = "projectKey", required = false) String projectKey) {
+            @RequestParam(value = "projectKey", required = false) String projectKey,
+            @RequestParam(value = "categories", required = false) List<String> categories,
+            @RequestParam(value = "categories[]", required = false) List<String> categoriesAlt,
+            @RequestParam(value = "excludeCategories", required = false) List<String> excludeCategories,
+            @RequestParam(value = "excludeCategories[]", required = false) List<String> excludeCategoriesAlt,
+            @RequestParam(value = "filePath", required = false) String filePath,
+            @RequestParam(value = "fileName", required = false) String fileName,
+            @RequestParam(value = "page", required = false) Integer page,
+            @RequestParam(value = "size", required = false) Integer size) {
         String normalizedProjectKey = normalizeProjectKey(projectKey);
-        CodeBlockDetailView view = viewMapper.toDetailView(blockStatsService.findDetail(normalizedProjectKey, blockId));
+        List<String> effectiveCategories = CollectionUtils.isEmpty(categories) ? categoriesAlt : categories;
+        List<String> effectiveExclude = CollectionUtils.isEmpty(excludeCategories)
+                ? excludeCategoriesAlt
+                : excludeCategories;
+        String normalizedFileName = StringUtils.hasText(fileName) ? fileName.trim() : null;
+        CodeBlockQuery.Builder builder = CodeBlockQuery.builder()
+                .projectKey(normalizedProjectKey)
+                .comparisonId(normalizedProjectKey)
+                .filePath(StringUtils.hasText(filePath) ? filePath : null)
+                .fileName(normalizedFileName);
+        if (page != null) {
+            builder.page(page);
+        }
+        if (size != null) {
+            builder.size(size);
+        }
+        if (!CollectionUtils.isEmpty(effectiveCategories)) {
+            builder.categories(effectiveCategories);
+        }
+        if (!CollectionUtils.isEmpty(effectiveExclude)) {
+            builder.excludeCategories(effectiveExclude);
+        }
+        CodeBlockDetailView view = viewMapper.toDetailView(
+                blockStatsService.findDetail(normalizedProjectKey, blockId, builder.build()));
         if (view == null) {
             log.info("未找到代码块，提示用户重新加载后再试。blockId={}，projectKey={}", blockId, normalizedProjectKey);
             return ApiResponseFactory.error("未找到指定的代码块，请执行重新加载后重试");

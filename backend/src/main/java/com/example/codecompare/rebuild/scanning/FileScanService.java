@@ -110,6 +110,10 @@ public class FileScanService {
      * delta is produced.
      */
     public ScanSummary scanIncremental(ProjectScanRequest request) {
+        return scanIncremental(request, true);
+    }
+
+    public ScanSummary scanIncremental(ProjectScanRequest request, boolean persist) {
         ProjectScanRequest normalized = normalize(request);
         log.info("Starting incremental scan, project={}", normalized.getProjectCode());
 
@@ -147,7 +151,22 @@ public class FileScanService {
                 records,
                 incremental.getGitDiffFiles(),
                 false));
+        if (!persist) {
+            log.debug("Transient incremental scan completed for project {} (will be purged by caller)", normalized.getProjectCode());
+        }
         return summary;
+    }
+
+    public ScanSummary scanIncrementalTransient(ProjectScanRequest request) {
+        return scanIncremental(request, scanProperties.isTransientPersist());
+    }
+
+    public void purgeProject(String projectCode) {
+        if (!StringUtils.hasText(projectCode)) {
+            return;
+        }
+        storagePurgeService.purgeAll(projectCode);
+        scanResultRepository.deleteSummary(projectCode.trim());
     }
 
     private ScanSummary executeFullScan(ProjectScanRequest normalized, boolean fullRescan) {

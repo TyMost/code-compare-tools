@@ -1,4 +1,4 @@
-﻿import { Message } from 'element-ui';
+import { Message } from 'element-ui';
 import {
   fetchOverview,
   fetchCodeBlocks,
@@ -269,11 +269,46 @@ const actions = {
     });
   },
 
-  async fetchDetail({ commit }, id) {
+  async fetchDetail({ commit, state }, id) {
     commit('SET_DETAIL_LOADING', true);
     try {
-      console.info('[migration] fetch block detail', id);
-      const detail = await fetchCodeBlockDetail(id);
+      const filters = state.filters || {};
+      const pagination = state.pagination || {};
+      const params = {};
+      const projectKey =
+        typeof filters.projectKey === 'string'
+          ? filters.projectKey.trim()
+          : filters.projectKey || '';
+      if (projectKey) {
+        params.projectKey = projectKey;
+      }
+      if (Array.isArray(filters.categories) && filters.categories.length) {
+        params.categories = filters.categories.filter(Boolean);
+      }
+      if (
+        Array.isArray(filters.excludeCategories) &&
+        filters.excludeCategories.length
+      ) {
+        params.excludeCategories = filters.excludeCategories.filter(Boolean);
+      }
+      const filePath =
+        typeof filters.filePath === 'string' ? filters.filePath.trim() : '';
+      if (filePath) {
+        params.filePath = filePath;
+      }
+      const fileName =
+        typeof filters.fileName === 'string' ? filters.fileName.trim() : '';
+      if (fileName) {
+        params.fileName = fileName;
+      }
+      if (pagination.page) {
+        params.page = pagination.page;
+      }
+      if (pagination.size) {
+        params.size = pagination.size;
+      }
+      console.info('[migration] fetch block detail', { id, params });
+      const detail = await fetchCodeBlockDetail(id, params);
       commit('SET_DETAIL', detail);
       return detail;
     } finally {

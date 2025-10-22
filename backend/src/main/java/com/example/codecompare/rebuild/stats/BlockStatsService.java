@@ -27,20 +27,21 @@ public class BlockStatsService {
                 pageDTO.getTotal(),
                 pageDTO.getTotalPages(),
                 statsViewMapper.toCategoryFilters(page),
-                page.getNewCodeRatio(),
                 page.getTotalLines()
         );
     }
 
     public CodeBlockDetailDTO findDetail(String projectKey, String blockId) {
+        return findDetail(projectKey, blockId, null);
+    }
+
+    public CodeBlockDetailDTO findDetail(String projectKey, String blockId, CodeBlockQuery query) {
         String comparisonId = StringUtils.hasText(projectKey) ? projectKey : null;
-        MetricsAggregator.BlockItem item = metricsAggregator.findBlockDetail(comparisonId, blockId);
-        if (item == null) {
-            item = metricsAggregator.findBlockDetailAcrossProjects(blockId);
-        }
-        if (item == null) {
+        MetricsAggregator.BlockContext context = metricsAggregator.findBlockContext(comparisonId, blockId, query);
+        if (context == null || context.getCurrent() == null) {
             return null;
         }
+        MetricsAggregator.BlockItem item = context.getCurrent();
         return new CodeBlockDetailDTO(
                 item.getId(),
                 item.getComparisonId(),
@@ -54,7 +55,9 @@ public class BlockStatsService {
                 item.getStatus(),
                 item.getStatusLabel(),
                 item.getCategories(),
-                false
+                false,
+                context.getPrevious() == null ? null : context.getPrevious().getId(),
+                context.getNext() == null ? null : context.getNext().getId()
         );
     }
 }

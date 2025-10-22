@@ -150,8 +150,11 @@ public class FileSystemAgentSuggestionRepository implements AgentSuggestionRepos
                 state.lock.writeLock().unlock();
             }
         }
-        Path directory = properties.resolveAgentSuggestions().resolve(safeSegment(comparisonId));
-        deleteDirectory(directory);
+        List<Path> directories = StorageFileHelper.findComparisonDirectories(
+                properties.resolveAgentSuggestions(), comparisonId);
+        for (Path directory : directories) {
+            deleteDirectory(directory);
+        }
     }
 
     private SuggestionState stateFor(String comparisonId, String filePath) {
@@ -212,13 +215,6 @@ public class FileSystemAgentSuggestionRepository implements AgentSuggestionRepos
         } catch (IOException ex) {
             throw new IllegalStateException("Failed to delete agent suggestion directory: " + directory, ex);
         }
-    }
-
-    private String safeSegment(String raw) {
-        if (raw == null) {
-            return "default";
-        }
-        return raw.replaceAll("[^a-zA-Z0-9._-]", "_");
     }
 
     private static final class SuggestionState {

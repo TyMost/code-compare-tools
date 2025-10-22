@@ -16,7 +16,9 @@ public class MigrationOverviewView {
     private final String newProjectPath;
     private final Instant lastSyncedAt;
     private final List<CategoryStatDTO> codeCategoryStats;
-    private final double newCodeRatio;
+    private final String diffEngine;
+    private final long gitSourceChangedLines;
+    private final long gitTargetChangedLines;
     private final long totalLines;
     private final long totalBlocks;
     private final ConfigurationSyncView configSync;
@@ -26,7 +28,9 @@ public class MigrationOverviewView {
                                  String newProjectPath,
                                  Instant lastSyncedAt,
                                  List<CategoryStatDTO> codeCategoryStats,
-                                 double newCodeRatio,
+                                 String diffEngine,
+                                 long gitSourceChangedLines,
+                                 long gitTargetChangedLines,
                                  long totalLines,
                                  long totalBlocks) {
         this(projectCode,
@@ -34,7 +38,9 @@ public class MigrationOverviewView {
                 newProjectPath,
                 lastSyncedAt,
                 codeCategoryStats,
-                newCodeRatio,
+                diffEngine,
+                gitSourceChangedLines,
+                gitTargetChangedLines,
                 totalLines,
                 totalBlocks,
                 null);
@@ -45,7 +51,9 @@ public class MigrationOverviewView {
                                  String newProjectPath,
                                  Instant lastSyncedAt,
                                  List<CategoryStatDTO> codeCategoryStats,
-                                 double newCodeRatio,
+                                 String diffEngine,
+                                 long gitSourceChangedLines,
+                                 long gitTargetChangedLines,
                                  long totalLines,
                                  long totalBlocks,
                                  ConfigurationSyncView configSync) {
@@ -56,7 +64,9 @@ public class MigrationOverviewView {
         this.codeCategoryStats = codeCategoryStats == null
                 ? Collections.emptyList()
                 : Collections.unmodifiableList(codeCategoryStats);
-        this.newCodeRatio = newCodeRatio;
+        this.diffEngine = diffEngine == null ? "default" : diffEngine;
+        this.gitSourceChangedLines = gitSourceChangedLines;
+        this.gitTargetChangedLines = gitTargetChangedLines;
         this.totalLines = totalLines;
         this.totalBlocks = totalBlocks;
         this.configSync = configSync;
@@ -82,8 +92,16 @@ public class MigrationOverviewView {
         return codeCategoryStats;
     }
 
-    public double getNewCodeRatio() {
-        return newCodeRatio;
+    public String getDiffEngine() {
+        return diffEngine;
+    }
+
+    public long getGitSourceChangedLines() {
+        return gitSourceChangedLines;
+    }
+
+    public long getGitTargetChangedLines() {
+        return gitTargetChangedLines;
     }
 
     public long getTotalLines() {

@@ -23,6 +23,28 @@
         </div>
       </div>
     </div>
+    <div class="navigation" v-if="previousId || nextId">
+      <el-button-group>
+        <el-button
+          type="text"
+          class="nav-button"
+          icon="el-icon-arrow-left"
+          :disabled="!previousId"
+          @click="$emit('previous')"
+        >
+          上一条
+        </el-button>
+        <el-button
+          type="text"
+          class="nav-button"
+          :disabled="!nextId"
+          @click="$emit('next')"
+        >
+          下一条
+          <i class="el-icon-arrow-right el-icon--right"></i>
+        </el-button>
+      </el-button-group>
+    </div>
   </div>
 </template>
 
@@ -41,6 +63,14 @@ export default {
     categories: {
       type: Array,
       default: () => [],
+    },
+    previousId: {
+      type: String,
+      default: '',
+    },
+    nextId: {
+      type: String,
+      default: '',
     },
   },
 };
@@ -61,6 +91,17 @@ export default {
 .info {
   display: flex;
   flex-direction: column;
+}
+
+.navigation {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+
+.nav-button {
+  padding: 0 8px;
+  font-weight: 600;
 }
 
 .file-path {

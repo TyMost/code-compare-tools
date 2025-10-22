@@ -15,7 +15,9 @@ public final class DashboardOverviewDTO {
     private final String newProjectPath;
     private final Instant lastSyncedAt;
     private final List<CategoryStatDTO> codeCategoryStats;
-    private final double newCodeRatio;
+    private final String diffEngine;
+    private final long gitSourceChangedLines;
+    private final long gitTargetChangedLines;
     private final long totalLines;
     private final long totalBlocks;
 
@@ -25,7 +27,9 @@ public final class DashboardOverviewDTO {
         this.newProjectPath = builder.newProjectPath;
         this.lastSyncedAt = builder.lastSyncedAt;
         this.codeCategoryStats = Collections.unmodifiableList(new ArrayList<>(builder.codeCategoryStats));
-        this.newCodeRatio = builder.newCodeRatio;
+        this.diffEngine = builder.diffEngine == null ? "default" : builder.diffEngine;
+        this.gitSourceChangedLines = builder.gitSourceChangedLines;
+        this.gitTargetChangedLines = builder.gitTargetChangedLines;
         this.totalLines = builder.totalLines;
         this.totalBlocks = builder.totalBlocks;
     }
@@ -50,8 +54,16 @@ public final class DashboardOverviewDTO {
         return codeCategoryStats;
     }
 
-    public double getNewCodeRatio() {
-        return newCodeRatio;
+    public String getDiffEngine() {
+        return diffEngine;
+    }
+
+    public long getGitSourceChangedLines() {
+        return gitSourceChangedLines;
+    }
+
+    public long getGitTargetChangedLines() {
+        return gitTargetChangedLines;
     }
 
     public long getTotalLines() {
@@ -72,7 +84,9 @@ public final class DashboardOverviewDTO {
         private String newProjectPath;
         private Instant lastSyncedAt;
         private final List<CategoryStatDTO> codeCategoryStats = new ArrayList<>();
-        private double newCodeRatio;
+        private String diffEngine;
+        private long gitSourceChangedLines;
+        private long gitTargetChangedLines;
         private long totalLines;
         private long totalBlocks;
 
@@ -111,8 +125,18 @@ public final class DashboardOverviewDTO {
             return this;
         }
 
-        public Builder newCodeRatio(double newCodeRatio) {
-            this.newCodeRatio = newCodeRatio;
+        public Builder diffEngine(String diffEngine) {
+            this.diffEngine = diffEngine;
+            return this;
+        }
+
+        public Builder gitSourceChangedLines(long gitSourceChangedLines) {
+            this.gitSourceChangedLines = gitSourceChangedLines;
+            return this;
+        }
+
+        public Builder gitTargetChangedLines(long gitTargetChangedLines) {
+            this.gitTargetChangedLines = gitTargetChangedLines;
             return this;
         }
 
