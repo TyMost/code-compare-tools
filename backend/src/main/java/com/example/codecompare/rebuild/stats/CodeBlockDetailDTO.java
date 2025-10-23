@@ -24,6 +24,8 @@ public final class CodeBlockDetailDTO {
     private final boolean aiSuggestionEnabled;
     private final String previousId;
     private final String nextId;
+    private final String diffMode;
+    private final List<DiffSegmentDTO> diffSegments;
 
     public CodeBlockDetailDTO(String id,
                               String comparisonId,
@@ -39,7 +41,9 @@ public final class CodeBlockDetailDTO {
                               List<String> categoryKeys,
                               boolean aiSuggestionEnabled,
                               String previousId,
-                              String nextId) {
+                              String nextId,
+                              String diffMode,
+                              List<DiffSegmentDTO> diffSegments) {
         this.id = id;
         this.comparisonId = comparisonId;
         this.sourceProjectCode = sourceProjectCode;
@@ -57,6 +61,10 @@ public final class CodeBlockDetailDTO {
         this.aiSuggestionEnabled = aiSuggestionEnabled;
         this.previousId = previousId;
         this.nextId = nextId;
+        this.diffMode = diffMode == null || diffMode.trim().isEmpty() ? "full" : diffMode.trim();
+        this.diffSegments = diffSegments == null
+                ? Collections.emptyList()
+                : Collections.unmodifiableList(new ArrayList<>(diffSegments));
     }
 
     public String getId() {
@@ -117,5 +125,13 @@ public final class CodeBlockDetailDTO {
 
     public String getNextId() {
         return nextId;
+    }
+
+    public String getDiffMode() {
+        return diffMode;
+    }
+
+    public List<DiffSegmentDTO> getDiffSegments() {
+        return diffSegments;
     }
 }

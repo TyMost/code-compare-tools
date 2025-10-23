@@ -1,4 +1,4 @@
-﻿package com.example.codecompare.rebuild.diff;
+package com.example.codecompare.rebuild.diff;
 
 import com.example.codecompare.rebuild.block.model.BlockDiff;
 import com.example.codecompare.rebuild.block.model.CodeSnapshot;

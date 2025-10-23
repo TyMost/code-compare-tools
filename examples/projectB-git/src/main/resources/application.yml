@@ -1,0 +1,11 @@
+﻿app:
+  name: demo-calculator
+  features:
+    experimental: true
+    safetyFence: true
+  reporting:
+    enabled: true
+    template: summary
+    mode: strict
+analytics:
+  enabled: true

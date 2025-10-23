@@ -6,12 +6,14 @@ import com.example.codecompare.rebuild.api.dto.CodeBlockItemView;
 import com.example.codecompare.rebuild.api.dto.CodeBlockListView;
 import com.example.codecompare.rebuild.api.dto.ConfigurationSyncItemView;
 import com.example.codecompare.rebuild.api.dto.ConfigurationSyncView;
+import com.example.codecompare.rebuild.api.dto.DiffSegmentView;
 import com.example.codecompare.rebuild.api.dto.MigrationOverviewView;
 import com.example.codecompare.rebuild.core.config.ConfigurationReloadReport;
 import com.example.codecompare.rebuild.stats.BlockStatsResponseDTO;
 import com.example.codecompare.rebuild.stats.CodeBlockDetailDTO;
 import com.example.codecompare.rebuild.stats.CodeBlockItemDTO;
 import com.example.codecompare.rebuild.stats.DashboardOverviewDTO;
+import com.example.codecompare.rebuild.stats.DiffSegmentDTO;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 
@@ -74,6 +76,11 @@ public class MigrationViewMapper {
         if (source == null) {
             return null;
         }
+        List<DiffSegmentView> segments = source.getDiffSegments().isEmpty()
+                ? Collections.emptyList()
+                : source.getDiffSegments().stream()
+                .map(this::toDiffSegmentView)
+                .collect(Collectors.toList());
         return new CodeBlockDetailView(
                 source.getId(),
                 source.getComparisonId(),
@@ -89,7 +96,9 @@ public class MigrationViewMapper {
                 source.getCategoryKeys(),
                 source.isAiSuggestionEnabled(),
                 source.getPreviousId(),
-                source.getNextId()
+                source.getNextId(),
+                source.getDiffMode(),
+                segments
         );
     }
 
@@ -143,6 +152,35 @@ public class MigrationViewMapper {
                 item.getLoadedAt(),
                 item.getSource(),
                 item.getCount()
+        );
+    }
+
+    private DiffSegmentView toDiffSegmentView(DiffSegmentDTO segment) {
+        if (segment == null) {
+            return new DiffSegmentView(
+                    "CHANGE",
+                    1,
+                    1,
+                    0,
+                    100d,
+                    Collections.emptyList(),
+                    Collections.emptyList(),
+                    "",
+                    "",
+                    Collections.<String, Object>emptyMap()
+            );
+        }
+        return new DiffSegmentView(
+                segment.getType().name(),
+                segment.getSourceStartLine(),
+                segment.getTargetStartLine(),
+                segment.getChangedLineCount(),
+                segment.getSimilarity(),
+                segment.getSourceLines(),
+                segment.getTargetLines(),
+                segment.getSourceContent(),
+                segment.getTargetContent(),
+                segment.getMetadata()
         );
     }
 }

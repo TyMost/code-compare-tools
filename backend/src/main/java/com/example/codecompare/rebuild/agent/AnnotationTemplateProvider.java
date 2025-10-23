@@ -23,7 +23,7 @@ public class AnnotationTemplateProvider {
     private static final Logger log = LoggerFactory.getLogger(AnnotationTemplateProvider.class);
 
     private static final String DEFAULT_TEMPLATE_FALLBACK =
-            "/** 迁移生成的代码片段开始 (blockId=${blockId}) */" + System.lineSeparator()
+            "/** 迁移生成的代码片段开始（blockId=${blockId}）*/" + System.lineSeparator()
                     + "${code}" + System.lineSeparator()
                     + "/** 迁移生成的代码片段结束 */";
 

@@ -42,21 +42,34 @@ public class DualIncrementalComparisonCalculator {
         double similarityAccumulator = sameLineCount;
         int totalChangedLines = sameLineCount;
         int blockIndex = 1;
+        double sourceCoveredLines = 0d;
+        double targetCoveredLines = 0d;
+        int sourceChangedLineTotal = 0;
+        int targetChangedLineTotal = 0;
 
         List<DualIncrementalComparisonBlockView> blocks = new ArrayList<DualIncrementalComparisonBlockView>();
 
         for (int s = 0; s < sourceBlocks.size(); s++) {
             IncrementalCodeBlock sourceBlock = sourceBlocks.get(s);
             MatchResult match = findBestMatch(sourceBlock, targetBlocks, targetMatched);
+            int sourceChangedLines = Math.max(1, sourceBlock.getChangedLines());
+            sourceChangedLineTotal += sourceChangedLines;
             if (match.getTargetIndex() >= 0) {
                 targetMatched[match.getTargetIndex()] = true;
                 IncrementalCodeBlock targetBlock = targetBlocks.get(match.getTargetIndex());
+                int targetChangedLines = Math.max(1, targetBlock.getChangedLines());
+                targetChangedLineTotal += targetChangedLines;
                 int referenceLines = Math.max(sourceBlock.getChangedLines(), targetBlock.getChangedLines());
                 if (referenceLines <= 0) {
                     referenceLines = 1;
                 }
-                similarityAccumulator += (match.getSimilarity() / 100d) * referenceLines;
+                double similarityRatio = match.getSimilarity() / 100d;
+                similarityAccumulator += similarityRatio * referenceLines;
                 totalChangedLines += referenceLines;
+                sourceCoveredLines += sourceChangedLines * similarityRatio;
+                targetCoveredLines += targetChangedLines * similarityRatio;
+                double sourceCoveragePercent = coveragePercent(sourceChangedLines * similarityRatio, sourceChangedLines);
+                double targetCoveragePercent = coveragePercent(targetChangedLines * similarityRatio, targetChangedLines);
                 blocks.add(buildBlockView(blockIndex++,
                         sourceBlock,
                         targetBlock,
@@ -64,7 +77,9 @@ public class DualIncrementalComparisonCalculator {
                         match.getSimilarity(),
                         "MATCHED",
                         sourceChange.getChangeType(),
-                        targetChange.getChangeType()));
+                        targetChange.getChangeType(),
+                        round(sourceCoveragePercent),
+                        round(targetCoveragePercent)));
             } else {
                 int referenceLines = Math.max(1, sourceBlock.getChangedLines());
                 totalChangedLines += referenceLines;
@@ -75,7 +90,9 @@ public class DualIncrementalComparisonCalculator {
                         0d,
                         "SOURCE_ONLY",
                         sourceChange.getChangeType(),
-                        IncrementalChangeType.NONE));
+                        IncrementalChangeType.NONE,
+                        0d,
+                        0d));
             }
         }
 
@@ -84,6 +101,8 @@ public class DualIncrementalComparisonCalculator {
                 continue;
             }
             IncrementalCodeBlock targetBlock = targetBlocks.get(t);
+            int targetChangedLines = Math.max(1, targetBlock.getChangedLines());
+            targetChangedLineTotal += targetChangedLines;
             int referenceLines = Math.max(1, targetBlock.getChangedLines());
             totalChangedLines += referenceLines;
             blocks.add(buildBlockView(blockIndex++,
@@ -93,17 +112,23 @@ public class DualIncrementalComparisonCalculator {
                     0d,
                     "TARGET_ONLY",
                     IncrementalChangeType.NONE,
-                    targetChange.getChangeType()));
+                    targetChange.getChangeType(),
+                    0d,
+                    0d));
         }
 
         double fileSimilarityPercent = totalChangedLines > 0
                 ? (similarityAccumulator / (double) totalChangedLines) * 100d
                 : 0d;
+        double coverageAtoB = coveragePercent(sourceCoveredLines, sourceChangedLineTotal);
+        double coverageBtoA = coveragePercent(targetCoveredLines, targetChangedLineTotal);
 
         DualIncrementalComparisonView view = DualIncrementalComparisonView.builder()
                 .fileSimilarity(round(fileSimilarityPercent))
                 .sameLineCount(sameLineCount)
                 .totalChangedLines(totalChangedLines)
+                .coverageAtoB(round(coverageAtoB))
+                .coverageBtoA(round(coverageBtoA))
                 .blocks(blocks)
                 .build();
         return Optional.of(view);
@@ -116,7 +141,9 @@ public class DualIncrementalComparisonCalculator {
                                                               double similarity,
                                                               String matchStatus,
                                                               IncrementalChangeType sourceChangeType,
-                                                              IncrementalChangeType targetChangeType) {
+                                                              IncrementalChangeType targetChangeType,
+                                                              double sourceCoveragePercent,
+                                                              double targetCoveragePercent) {
         String blockType = resolveBlockType(sourceBlock, targetBlock);
         String changeType = formatChangeType(sourceChangeType, targetChangeType);
 
@@ -126,7 +153,9 @@ public class DualIncrementalComparisonCalculator {
                 .referenceLineCount(referenceLines)
                 .blockType(blockType)
                 .changeType(changeType)
-                .matchStatus(matchStatus);
+                .matchStatus(matchStatus)
+                .sourceCoveragePercent(sourceCoveragePercent)
+                .targetCoveragePercent(targetCoveragePercent);
 
         if (sourceBlock != null) {
             builder.sourceChangedLines(sourceBlock.getChangedLines());
@@ -217,6 +246,20 @@ public class DualIncrementalComparisonCalculator {
         String normalizedLeft = left == null ? "" : left.trim();
         String normalizedRight = right == null ? "" : right.trim();
         return normalizedLeft.equals(normalizedRight);
+    }
+
+    private double coveragePercent(double coveredLines, int totalChangedLines) {
+        if (totalChangedLines <= 0) {
+            return 100d;
+        }
+        double ratio = coveredLines / (double) totalChangedLines;
+        if (ratio < 0d) {
+            ratio = 0d;
+        }
+        if (ratio > 1d) {
+            ratio = 1d;
+        }
+        return ratio * 100d;
     }
 
     private double round(double value) {

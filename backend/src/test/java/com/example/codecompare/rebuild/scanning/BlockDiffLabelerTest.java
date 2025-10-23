@@ -1,4 +1,4 @@
-﻿package com.example.codecompare.rebuild.scanning;
+package com.example.codecompare.rebuild.scanning;
 
 import com.example.codecompare.rebuild.block.model.BlockDiff;
 import com.example.codecompare.rebuild.core.properties.ApplicationProperties;
@@ -49,7 +49,8 @@ class BlockDiffLabelerTest {
         assertThat(labeled.getMetadata()).containsKey("ruleMetadata");
         Object ruleMetadata = labeled.getMetadata().get("ruleMetadata");
         assertThat(ruleMetadata).isInstanceOf(Map.class);
-        Map<?, ?> ruleMetadataMap = (Map<?, ?>) ruleMetadata;
+        @SuppressWarnings("unchecked")
+        Map<String, ?> ruleMetadataMap = (Map<String, ?>) ruleMetadata;
         assertThat(ruleMetadataMap).containsKey("migrated");
         assertThat(ruleMetadataMap.get("migrated")).isEqualTo(metadata);
         assertThat(labeled.getMetadata()).containsEntry("existingKey", "existing");

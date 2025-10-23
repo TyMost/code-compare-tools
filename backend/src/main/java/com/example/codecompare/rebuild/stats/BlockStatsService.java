@@ -3,6 +3,9 @@ package com.example.codecompare.rebuild.stats;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.Collections;
+import java.util.List;
+
 /**
  * 代码块统计服务，提供分页与筛选能力。
  */
@@ -42,6 +45,11 @@ public class BlockStatsService {
             return null;
         }
         MetricsAggregator.BlockItem item = context.getCurrent();
+        String diffMode = item.getDiffMode();
+        boolean incremental = "incremental".equalsIgnoreCase(diffMode);
+        List<DiffSegmentDTO> segments = incremental && item.getDiff() != null
+                ? Collections.singletonList(DiffSegmentDTO.from(item.getDiff()))
+                : Collections.<DiffSegmentDTO>emptyList();
         return new CodeBlockDetailDTO(
                 item.getId(),
                 item.getComparisonId(),
@@ -57,7 +65,9 @@ public class BlockStatsService {
                 item.getCategories(),
                 false,
                 context.getPrevious() == null ? null : context.getPrevious().getId(),
-                context.getNext() == null ? null : context.getNext().getId()
+                context.getNext() == null ? null : context.getNext().getId(),
+                diffMode,
+                segments
         );
     }
 }

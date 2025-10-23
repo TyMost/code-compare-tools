@@ -43,7 +43,9 @@ public final class DiffSegmentDTO {
         this.targetLines = targetLines == null ? Collections.<String>emptyList() : Collections.unmodifiableList(new ArrayList<String>(targetLines));
         this.sourceContent = sourceContent == null ? "" : sourceContent;
         this.targetContent = targetContent == null ? "" : targetContent;
-        this.metadata = metadata == null ? Collections.<String, Object>emptyMap() : Collections.unmodifiableMap(metadata);
+        this.metadata = metadata == null
+                ? Collections.<String, Object>emptyMap()
+                : Collections.unmodifiableMap(new java.util.LinkedHashMap<String, Object>(metadata));
     }
 
     public static DiffSegmentDTO from(BlockDiff diff) {

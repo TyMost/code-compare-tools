@@ -428,6 +428,7 @@ public class ProjectDiffGenerator implements ApplicationListener<ScanCompletedEv
                 .filePath(relativePath)
                 .sourceProjectCode(sourceCode)
                 .targetProjectCode(targetCode)
+                .diffMode(resolveDiffMode())
                 .records(context.records)
                 .build());
 
@@ -670,6 +671,14 @@ public class ProjectDiffGenerator implements ApplicationListener<ScanCompletedEv
         String normalized = content.replace("\r\n", "\n").replace('\r', '\n');
         String[] values = normalized.split("\n", -1);
         return new ArrayList<String>(Arrays.asList(values));
+    }
+
+    private String resolveDiffMode() {
+        String engine = scanProperties == null ? null : scanProperties.getDiffEngine();
+        if ("git".equalsIgnoreCase(engine)) {
+            return "incremental";
+        }
+        return "full";
     }
 
     private static final class BlockProcessingContext {

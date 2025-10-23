@@ -22,21 +22,35 @@ logging:
 
 migration:
   project:
+    # 覆盖演示（projectA-git vs projectB-git）
     sources:
       - code: projectA-git
         path: D:\\Coding\\code-compare-tools\\examples\\projectA-git
     targets:
       - code: projectB-git
         path: D:\\Coding\\code-compare-tools\\examples\\projectB-git
+    # 增量 Diff 速查表示例（projectC-git/source-app vs projectC-git/target-app），如需启用请取消注释并注释上方配置
+    # sources:
+    #   - code: projectC-source-app
+    #     path: D:\\Coding\\code-compare-tools\\examples\\projectC-git\\source-app
+    # targets:
+    #   - code: projectC-target-app
+    #     path: D:\\Coding\\code-compare-tools\\examples\\projectC-git\\target-app
   rules:
     path: classpath:config/rules.yaml
     reload-on-change: false
   scan:
     diffEngine: git
+    # 覆盖演示（projectA-git vs projectB-git）
     git-base-ref-source: refs/heads/main
     git-target-ref-source: refs/heads/feature/git-demo
     git-base-ref-target: refs/heads/main
     git-target-ref-target: refs/heads/release/git-demo
+    # 增量 Diff 速查表示例（projectC-git/source-app vs projectC-git/target-app），如需启用请取消注释并注释上方配置
+    # git-base-ref-source: refs/heads/main
+    # git-target-ref-source: refs/heads/feature/incremental-demo
+    # git-base-ref-target: refs/heads/main
+    # git-target-ref-target: refs/heads/feature/incremental-demo
     include-working-tree: true
     since-last-summary: false
     git-fetch-missing-refs: true

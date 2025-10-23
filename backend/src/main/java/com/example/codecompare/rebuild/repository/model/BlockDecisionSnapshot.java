@@ -24,6 +24,7 @@ public final class BlockDecisionSnapshot {
     private final String sourceProjectCode;
     private final String targetProjectCode;
     private final Instant analyzedAt;
+    private final String diffMode;
     private final List<BlockDecisionRecord> records;
 
     private BlockDecisionSnapshot(Builder builder) {
@@ -33,6 +34,7 @@ public final class BlockDecisionSnapshot {
         this.sourceProjectCode = require(builder.sourceProjectCode, "sourceProjectCode");
         this.targetProjectCode = require(builder.targetProjectCode, "targetProjectCode");
         this.analyzedAt = builder.analyzedAt == null ? Instant.now() : builder.analyzedAt;
+        this.diffMode = normalizeMode(builder.diffMode);
         this.records = builder.records == null
                 ? Collections.emptyList()
                 : Collections.unmodifiableList(new ArrayList<>(builder.records));
@@ -44,6 +46,17 @@ public final class BlockDecisionSnapshot {
 
     private String normalize(String path) {
         return path.replace('\\', '/');
+    }
+
+    private String normalizeMode(String mode) {
+        if (mode == null) {
+            return "full";
+        }
+        String trimmed = mode.trim();
+        if (trimmed.isEmpty()) {
+            return "full";
+        }
+        return trimmed;
     }
 
     public static Builder builder() {
@@ -74,6 +87,10 @@ public final class BlockDecisionSnapshot {
         return analyzedAt;
     }
 
+    public String getDiffMode() {
+        return diffMode;
+    }
+
     public List<BlockDecisionRecord> getRecords() {
         return records;
     }
@@ -87,6 +104,7 @@ public final class BlockDecisionSnapshot {
         private String sourceProjectCode;
         private String targetProjectCode;
         private Instant analyzedAt;
+        private String diffMode;
         private List<BlockDecisionRecord> records;
 
         public Builder() {
@@ -119,6 +137,11 @@ public final class BlockDecisionSnapshot {
 
         public Builder analyzedAt(@JsonProperty("analyzedAt") Instant analyzedAt) {
             this.analyzedAt = analyzedAt;
+            return this;
+        }
+
+        public Builder diffMode(@JsonProperty("diffMode") String diffMode) {
+            this.diffMode = diffMode;
             return this;
         }
 

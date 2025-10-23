@@ -1,5 +1,6 @@
 package com.example.codecompare.rebuild.agent;
 
+import com.example.codecompare.rebuild.agent.config.MigrationAnnotationProperties;
 import com.example.codecompare.rebuild.agent.migration.annotation.AnnotationRenderingService;
 import com.example.codecompare.rebuild.agent.migration.diff.DiffSynchronizationService;
 import com.example.codecompare.rebuild.agent.migration.io.AnnotatedFileWriter;
@@ -15,6 +16,7 @@ import com.example.codecompare.rebuild.repository.model.PageRequest;
 import com.example.codecompare.rebuild.repository.model.PageResult;
 import com.example.codecompare.rebuild.stats.BlockStatsService;
 import com.example.codecompare.rebuild.stats.CodeBlockDetailDTO;
+import com.example.codecompare.rebuild.stats.DiffSegmentDTO;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -81,9 +83,13 @@ class CodeBlockMigrationServiceTest {
                 null,
                 "newLine1\nnewLine2\n",
                 "pending",
-                "待处理",
-                Collections.emptyList(),
-                false);
+                "pendingLabel",
+                Collections.<String>emptyList(),
+                false,
+                null,
+                null,
+                null,
+                Collections.<DiffSegmentDTO>emptyList());
 
         CodeBlockDetailDTO block2 = new CodeBlockDetailDTO(
                 "block-2",
@@ -96,9 +102,13 @@ class CodeBlockMigrationServiceTest {
                 null,
                 "// tail comment\n",
                 "pending",
-                "待处理",
-                Collections.emptyList(),
-                false);
+                "pendingLabel",
+                Collections.<String>emptyList(),
+                false,
+                null,
+                null,
+                null,
+                Collections.<DiffSegmentDTO>emptyList());
 
         when(blockStatsService.findDetail(any(), eq("block-1"))).thenReturn(block1);
         when(blockStatsService.findDetail(any(), eq("block-2"))).thenReturn(block2);
@@ -115,13 +125,16 @@ class CodeBlockMigrationServiceTest {
 
         InMemoryBlockDecisionRepository repository = new InMemoryBlockDecisionRepository(initialSnapshot);
 
+        MigrationAnnotationProperties migrationAnnotationProperties = new MigrationAnnotationProperties();
+
         CodeBlockMigrationService service = new CodeBlockMigrationService(
                 blockStatsService,
                 repository,
                 annotationRenderingService,
                 mutationService,
                 annotatedFileWriter,
-                diffSynchronizationService);
+                diffSynchronizationService,
+                migrationAnnotationProperties);
 
         CodeBlockMigrationService.MigrationOperationResult result =
                 service.applyAnnotatedCopies(Arrays.asList("block-1", "block-2"));
@@ -156,8 +169,8 @@ class CodeBlockMigrationServiceTest {
         DiffSynchronizationService diffSynchronizationService = mock(DiffSynchronizationService.class);
         when(diffSynchronizationService.refreshSiblingDiffs(any(), any()))
                 .thenAnswer(invocation -> invocation.getArgument(1));
-
         InMemoryBlockDecisionRepository repository = new InMemoryBlockDecisionRepository(null);
+        MigrationAnnotationProperties migrationAnnotationProperties = new MigrationAnnotationProperties();
 
         CodeBlockMigrationService service = new CodeBlockMigrationService(
                 blockStatsService,
@@ -165,7 +178,8 @@ class CodeBlockMigrationServiceTest {
                 annotationRenderingService,
                 mutationService,
                 annotatedFileWriter,
-                diffSynchronizationService);
+                diffSynchronizationService,
+                migrationAnnotationProperties);
 
         CodeBlockMigrationService.MigrationOperationResult result =
                 service.applyAnnotatedCopies(Collections.singletonList("missing"));

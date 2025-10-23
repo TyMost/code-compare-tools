@@ -19,6 +19,8 @@ public final class DualIncrementalComparisonView {
     private final int sameLineCount;
     private final int totalChangedLines;
     private final List<DualIncrementalComparisonBlockView> blocks;
+    private final double coverageAtoB;
+    private final double coverageBtoA;
 
     private DualIncrementalComparisonView(Builder builder) {
         this.fileSimilarity = builder.fileSimilarity < 0d ? 0d : Math.min(builder.fileSimilarity, 100d);
@@ -27,6 +29,8 @@ public final class DualIncrementalComparisonView {
         this.blocks = builder.blocks == null
                 ? Collections.<DualIncrementalComparisonBlockView>emptyList()
                 : Collections.unmodifiableList(new ArrayList<DualIncrementalComparisonBlockView>(builder.blocks));
+        this.coverageAtoB = clamp(builder.coverageAtoB);
+        this.coverageBtoA = clamp(builder.coverageBtoA);
     }
 
     public static Builder builder() {
@@ -49,6 +53,24 @@ public final class DualIncrementalComparisonView {
         return blocks;
     }
 
+    public double getCoverageAtoB() {
+        return coverageAtoB;
+    }
+
+    public double getCoverageBtoA() {
+        return coverageBtoA;
+    }
+
+    private double clamp(double value) {
+        if (value < 0d) {
+            return 0d;
+        }
+        if (value > 100d) {
+            return 100d;
+        }
+        return value;
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     @JsonPOJOBuilder(withPrefix = "")
     public static final class Builder {
@@ -56,6 +78,8 @@ public final class DualIncrementalComparisonView {
         private int sameLineCount;
         private int totalChangedLines;
         private List<DualIncrementalComparisonBlockView> blocks;
+        private double coverageAtoB;
+        private double coverageBtoA;
 
         public Builder() {
         }
@@ -77,6 +101,16 @@ public final class DualIncrementalComparisonView {
 
         public Builder blocks(@JsonProperty("blocks") List<DualIncrementalComparisonBlockView> blocks) {
             this.blocks = blocks;
+            return this;
+        }
+
+        public Builder coverageAtoB(@JsonProperty("coverageAtoB") double coverageAtoB) {
+            this.coverageAtoB = coverageAtoB;
+            return this;
+        }
+
+        public Builder coverageBtoA(@JsonProperty("coverageBtoA") double coverageBtoA) {
+            this.coverageBtoA = coverageBtoA;
             return this;
         }
 

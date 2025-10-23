@@ -68,6 +68,7 @@ public class BlockDecisionMutationService {
                 .filePath(snapshot.getFilePath())
                 .sourceProjectCode(snapshot.getSourceProjectCode())
                 .targetProjectCode(snapshot.getTargetProjectCode())
+                .diffMode(snapshot.getDiffMode())
                 .records(updatedRecords)
                 .analyzedAt(now)
                 .build();
@@ -96,7 +97,9 @@ public class BlockDecisionMutationService {
             metadata.remove(METADATA_TEMPLATE_KEY);
         }
         BlockDiff baseDiff = original.getDiff();
-        backupUndoMetadata(metadata, original, baseDiff);
+        if (!hasUndoBackup(metadata)) {
+            backupUndoMetadata(metadata, original, baseDiff);
+        }
         boolean cleanLabels = shouldCleanLabels(stage);
         List<String> labelIds = prepareLabelList(baseDiff == null ? null : baseDiff.getLabelIds(), cleanLabels);
         List<String> labels = prepareLabelList(baseDiff == null ? null : baseDiff.getLabels(), cleanLabels);
@@ -252,6 +255,15 @@ public class BlockDecisionMutationService {
                 baseDiff == null || baseDiff.getLabelIds() == null ? Collections.emptyList() : new ArrayList<String>(baseDiff.getLabelIds()));
         metadata.put(METADATA_UNDO_LABELS,
                 baseDiff == null || baseDiff.getLabels() == null ? Collections.emptyList() : new ArrayList<String>(baseDiff.getLabels()));
+    }
+
+    private boolean hasUndoBackup(Map<String, Object> metadata) {
+        return metadata != null
+                && (metadata.containsKey(METADATA_UNDO_STATUS)
+                || metadata.containsKey(METADATA_UNDO_RISK)
+                || metadata.containsKey(METADATA_UNDO_TARGET)
+                || metadata.containsKey(METADATA_UNDO_LABEL_IDS)
+                || metadata.containsKey(METADATA_UNDO_LABELS));
     }
 
     @SuppressWarnings("unchecked")

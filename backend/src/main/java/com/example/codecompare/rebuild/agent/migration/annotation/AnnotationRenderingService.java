@@ -7,9 +7,6 @@ import com.example.codecompare.rebuild.stats.CodeBlockDetailDTO;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-import java.util.List;
-import java.util.Locale;
-
 /**
  * Generates annotated code snippets for migration workflows.
  */
@@ -34,8 +31,8 @@ public class AnnotationRenderingService {
         if (StringUtils.hasText(overrideTemplate)) {
             return renderWithCustomTemplate(blockId, normalizedSource, targetBaseline, overrideTemplate);
         }
-        boolean useAdaptTemplate = hasAdaptCategory(detail.getCategoryKeys());
-        String desiredKey = useAdaptTemplate ? "migrate_adapt" : "default";
+        boolean hasTargetBaseline = StringUtils.hasText(targetBaseline);
+        String desiredKey = hasTargetBaseline ? "migrate_adapt" : "default";
         AnnotationTemplateProvider.AnnotationRenderResult result =
                 annotationTemplateProvider.renderWithKey(blockId, normalizedSource, targetBaseline, desiredKey);
         return new RenderedAnnotation(result.getContent(), result.getTemplate(), result.getTemplateKey());
@@ -122,15 +119,4 @@ public class AnnotationRenderingService {
         return "";
     }
 
-    private boolean hasAdaptCategory(List<String> categories) {
-        if (categories == null || categories.isEmpty()) {
-            return false;
-        }
-        for (String category : categories) {
-            if (category != null && "migrate_adapt".equalsIgnoreCase(category.trim())) {
-                return true;
-            }
-        }
-        return false;
-    }
 }

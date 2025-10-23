@@ -364,12 +364,16 @@ public class GitComparisonBatchService {
                     String filePath = fileView.getFilePath();
                     DualIncrementalComparisonView dual = fileView.getDualComparison();
                     double similarity = dual == null ? 0d : safeDouble(dual.getFileSimilarity());
-                    fileRows.add(new FileRow(pair.source.code, pair.target.code, filePath, similarity));
+                    double coverageAtoB = dual == null ? 0d : safeDouble(dual.getCoverageAtoB());
+                    double coverageBtoA = dual == null ? 0d : safeDouble(dual.getCoverageBtoA());
+                    fileRows.add(new FileRow(pair.source.code, pair.target.code, filePath, similarity, coverageAtoB, coverageBtoA));
 
                     int sourceLineCount = totalLines(fileView.getSource());
                     int targetLineCount = totalLines(fileView.getTarget());
-                    accumulateAggregate(aggregates, pair, Role.SOURCE, sourceLineCount, similarity);
-                    accumulateAggregate(aggregates, pair, Role.TARGET, targetLineCount, similarity);
+                    int sourceChangedLines = changedLines(fileView.getSource());
+                    int targetChangedLines = changedLines(fileView.getTarget());
+                    accumulateAggregate(aggregates, pair, Role.SOURCE, sourceLineCount, sourceChangedLines, similarity, coverageAtoB);
+                    accumulateAggregate(aggregates, pair, Role.TARGET, targetLineCount, targetChangedLines, similarity, coverageBtoA);
                 }
             } finally {
                 if (overrideSnapshot != null) {
@@ -384,13 +388,15 @@ public class GitComparisonBatchService {
                                      ProjectPair pair,
                                      Role role,
                                      int lineCount,
-                                     double similarity) {
+                                     int changedLineCount,
+                                     double similarity,
+                                     double coverage) {
         String key = pair.source.code + "->" + pair.target.code + "::" + role.name();
         RepositoryAggregate aggregate = aggregates.computeIfAbsent(key, ignored -> new RepositoryAggregate(
                 role == Role.SOURCE ? pair.source.code : pair.target.code,
                 role == Role.SOURCE ? pair.target.code : pair.source.code,
                 role));
-        aggregate.increment(lineCount, similarity);
+        aggregate.increment(lineCount, changedLineCount, similarity, coverage);
     }
 
     private byte[] writeWorkbook(BatchComputationResult computation) {
@@ -405,12 +411,14 @@ public class GitComparisonBatchService {
     }
 
     private void writeFileSimilaritySheet(XSSFWorkbook workbook, List<FileRow> rows) {
-        Sheet sheet = workbook.createSheet("File Similarity");
+        Sheet sheet = workbook.createSheet("文件比对");
         Row header = sheet.createRow(0);
-        header.createCell(0).setCellValue("Source Project");
-        header.createCell(1).setCellValue("Target Project");
-        header.createCell(2).setCellValue("File Path");
-        header.createCell(3).setCellValue("Similarity (%)");
+        header.createCell(0).setCellValue("源项目");
+        header.createCell(1).setCellValue("目标项目");
+        header.createCell(2).setCellValue("文件路径");
+        header.createCell(3).setCellValue("相似度（%）");
+        header.createCell(4).setCellValue("覆盖率（源→目标 %）");
+        header.createCell(5).setCellValue("覆盖率（目标→源 %）");
 
         int rowIndex = 1;
         for (FileRow row : rows) {
@@ -419,22 +427,27 @@ public class GitComparisonBatchService {
             excelRow.createCell(1).setCellValue(row.targetProject);
             excelRow.createCell(2).setCellValue(row.filePath);
             excelRow.createCell(3).setCellValue(round(row.similarity, 2));
+            excelRow.createCell(4).setCellValue(round(row.coverageAtoB, 2));
+            excelRow.createCell(5).setCellValue(round(row.coverageBtoA, 2));
         }
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 6; i++) {
             sheet.autoSizeColumn(i);
         }
     }
 
     private void writeRepositorySheet(XSSFWorkbook workbook, List<RepositoryAggregate> aggregates) {
-        Sheet sheet = workbook.createSheet("Repository Similarity");
+        Sheet sheet = workbook.createSheet("仓库汇总");
         Row header = sheet.createRow(0);
-        header.createCell(0).setCellValue("Project");
-        header.createCell(1).setCellValue("Role");
-        header.createCell(2).setCellValue("Counterpart");
-        header.createCell(3).setCellValue("Files");
-        header.createCell(4).setCellValue("Total Lines");
-        header.createCell(5).setCellValue("Weighted Similarity");
-        header.createCell(6).setCellValue("Similarity %");
+        header.createCell(0).setCellValue("项目");
+        header.createCell(1).setCellValue("角色");
+        header.createCell(2).setCellValue("对比对象");
+        header.createCell(3).setCellValue("文件数量");
+        header.createCell(4).setCellValue("总行数");
+        header.createCell(5).setCellValue("加权相似度");
+        header.createCell(6).setCellValue("平均相似度");
+        header.createCell(7).setCellValue("变更行数");
+        header.createCell(8).setCellValue("覆盖行数");
+        header.createCell(9).setCellValue("平均覆盖率");
 
         CreationHelper helper = workbook.getCreationHelper();
         CellStyle percentStyle = workbook.createCellStyle();
@@ -452,8 +465,13 @@ public class GitComparisonBatchService {
             Cell percentCell = row.createCell(6);
             percentCell.setCellValue(aggregate.weightedAverage() / 100d);
             percentCell.setCellStyle(percentStyle);
+            row.createCell(7).setCellValue(aggregate.changedLines());
+            row.createCell(8).setCellValue(round(aggregate.coveredLines(), 2));
+            Cell coveragePercentCell = row.createCell(9);
+            coveragePercentCell.setCellValue(aggregate.coverageAverage() / 100d);
+            coveragePercentCell.setCellStyle(percentStyle);
         }
-        for (int i = 0; i < 7; i++) {
+        for (int i = 0; i < 10; i++) {
             sheet.autoSizeColumn(i);
         }
     }
@@ -500,6 +518,13 @@ public class GitComparisonBatchService {
             return 0;
         }
         return Math.max(0, detailView.getTotalLineCount());
+    }
+
+    private int changedLines(IncrementalDiffFileDetailView detailView) {
+        if (detailView == null || detailView.getGitDiff() == null) {
+            return 0;
+        }
+        return Math.max(0, detailView.getGitDiff().getChangedLineCount());
     }
 
     private double round(double value, int scale) {
@@ -564,12 +589,21 @@ public class GitComparisonBatchService {
         private final String targetProject;
         private final String filePath;
         private final double similarity;
+        private final double coverageAtoB;
+        private final double coverageBtoA;
 
-        private FileRow(String sourceProject, String targetProject, String filePath, double similarity) {
+        private FileRow(String sourceProject,
+                        String targetProject,
+                        String filePath,
+                        double similarity,
+                        double coverageAtoB,
+                        double coverageBtoA) {
             this.sourceProject = sourceProject;
             this.targetProject = targetProject;
             this.filePath = filePath;
             this.similarity = similarity;
+            this.coverageAtoB = coverageAtoB;
+            this.coverageBtoA = coverageBtoA;
         }
     }
 
@@ -580,6 +614,9 @@ public class GitComparisonBatchService {
         private int fileCount;
         private long totalLineCount;
         private double similarityAccumulator;
+        private long changedLines;
+        private double coverageAccumulator;
+        private double coveredLineAccumulator;
 
         private RepositoryAggregate(String projectCode, String counterpartCode, Role role) {
             this.projectCode = projectCode;
@@ -588,13 +625,22 @@ public class GitComparisonBatchService {
             this.fileCount = 0;
             this.totalLineCount = 0L;
             this.similarityAccumulator = 0d;
+            this.changedLines = 0L;
+            this.coverageAccumulator = 0d;
+            this.coveredLineAccumulator = 0d;
         }
 
-        private void increment(int lineCount, double similarity) {
+        private void increment(int lineCount, int changedLineCount, double similarity, double coverage) {
             this.fileCount++;
             if (lineCount > 0) {
                 this.totalLineCount += lineCount;
                 this.similarityAccumulator += similarity * lineCount;
+            }
+            if (changedLineCount > 0) {
+                this.changedLines += changedLineCount;
+                double normalizedCoverage = normalizePercentage(coverage);
+                this.coverageAccumulator += normalizedCoverage * changedLineCount;
+                this.coveredLineAccumulator += (normalizedCoverage / 100d) * changedLineCount;
             }
         }
 
@@ -607,6 +653,31 @@ public class GitComparisonBatchService {
                 return 0d;
             }
             return similarityAccumulator / (double) totalLineCount;
+        }
+
+        private double coverageAverage() {
+            if (changedLines <= 0L) {
+                return 100d;
+            }
+            return coverageAccumulator / (double) changedLines;
+        }
+
+        private double coveredLines() {
+            return coveredLineAccumulator;
+        }
+
+        private long changedLines() {
+            return changedLines;
+        }
+
+        private static double normalizePercentage(double value) {
+            if (value < 0d) {
+                return 0d;
+            }
+            if (value > 100d) {
+                return 100d;
+            }
+            return value;
         }
     }
 

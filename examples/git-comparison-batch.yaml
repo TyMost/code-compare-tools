@@ -1,16 +1,14 @@
-# Batch export example configuration.
-# Each pair provides an explicit source → target comparison. Paths point to the working copies containing scan data.
-#
-# These sample pairs only rely on the repositories that ship with the project so you can
-# immediately validate the Excel export produces multiple source→target rows.
+# Sample batch configuration targeting the demo repositories beneath `examples/`.
+# These pairs exercise the git-comparison Excel export, including similarity and
+# the new coverage metrics emitted by the backend.
 
-# Optional global agent flags. When set to false the migration stage will fall back to pure insertion mode.
 agent:
-  enable-replacement-mode: false
+  enable-replacement-mode: true
 
 pairs:
-  # Pair 1: projectA-git feature branch vs. projectB-git release branch.
-  # This is identical to the baseline used by the README and guarantees non-empty results.
+  # Primary scenario: feature branch from projectA-git compared against the
+  # hardened release branch from projectB-git. This mirrors the configuration
+  # in backend/application.yml so UI and batch exports stay aligned.
   - source:
       code: projectA-git
       path: D:\Coding\code-compare-tools\examples\projectA-git
@@ -20,16 +18,17 @@ pairs:
     git-base-ref-source: refs/heads/main
     git-target-ref-source: refs/heads/feature/git-demo
     git-base-ref-target: refs/heads/main
-    git-target-ref-target: refs/heads/20251019v1.1Git
-
-  # Pair 3: compare two alternate repositories with distinct histories.
-  - source:
-      code: projectC-git
-      path: D:\Coding\code-compare-tools\examples\projectC-git
-    target:
-      code: projectD-git
-      path: D:\Coding\code-compare-tools\examples\projectD-git
-    git-base-ref-source: refs/heads/main
-    git-target-ref-source: refs/heads/feature/git-demo
-    git-base-ref-target: refs/heads/main
     git-target-ref-target: refs/heads/release/git-demo
+
+  # Optional reverse comparison to highlight coverage asymmetry when the
+  # production branch acts as the source of truth.
+  - source:
+      code: projectB-git
+      path: D:\Coding\code-compare-tools\examples\projectB-git
+    target:
+      code: projectA-git
+      path: D:\Coding\code-compare-tools\examples\projectA-git
+    git-base-ref-source: refs/heads/main
+    git-target-ref-source: refs/heads/release/git-demo
+    git-base-ref-target: refs/heads/main
+    git-target-ref-target: refs/heads/feature/git-demo

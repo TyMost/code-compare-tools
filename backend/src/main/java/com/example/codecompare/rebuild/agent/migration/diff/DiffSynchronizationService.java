@@ -130,6 +130,7 @@ public class DiffSynchronizationService {
                 .filePath(snapshot.getFilePath())
                 .sourceProjectCode(snapshot.getSourceProjectCode())
                 .targetProjectCode(snapshot.getTargetProjectCode())
+                .diffMode(snapshot.getDiffMode())
                 .records(updatedRecords)
                 .analyzedAt(analyzedAt)
                 .build();

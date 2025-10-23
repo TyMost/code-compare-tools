@@ -22,10 +22,14 @@
 
     <el-card shadow="never" class="diff-card" v-loading="detailLoading">
       <code-diff-viewer
-        v-if="detail"
+        v-if="detail && !isIncremental"
         :original="detail.oldCode || ''"
         :modified="detail.newCode || ''"
         :language="detectLanguage(detail.filePath)"
+      />
+      <incremental-diff-viewer
+        v-else-if="detail"
+        :segments="diffSegments"
       />
       <div v-else class="empty-state">
         <el-empty description="暂无数据" />
@@ -45,6 +49,7 @@ import { mapState, mapGetters } from 'vuex';
 import DetailHeader from '@/components/detail/DetailHeader.vue';
 import ActionBar from '@/components/detail/ActionBar.vue';
 import CodeDiffViewer from '@/components/detail/CodeDiffViewer.vue';
+import IncrementalDiffViewer from '@/components/detail/IncrementalDiffViewer.vue';
 import AISuggestionPanel from '@/components/detail/AISuggestionPanel.vue';
 import featureFlags from '@/config/featureFlags';
 
@@ -54,6 +59,7 @@ export default {
     DetailHeader,
     ActionBar,
     CodeDiffViewer,
+    IncrementalDiffViewer,
     AISuggestionPanel,
   },
   props: {
@@ -92,6 +98,18 @@ export default {
         return false;
       }
       return this.detail?.aiSuggestionEnabled ?? false;
+    },
+    diffMode() {
+      return (this.detail?.diffMode || 'full').toLowerCase();
+    },
+    isIncremental() {
+      return this.diffMode === 'incremental';
+    },
+    diffSegments() {
+      if (!Array.isArray(this.detail?.diffSegments)) {
+        return [];
+      }
+      return this.detail.diffSegments;
     },
   },
   watch: {

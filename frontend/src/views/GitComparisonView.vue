@@ -1,18 +1,18 @@
-﻿<template>
+<template>
   <div class="git-comparison-view">
     <el-card class="filter-card" shadow="never">
       <div class="filters">
         <el-input
           v-model="localSourceKey"
           size="small"
-          placeholder="源项目标识（如 projectA-git）"
+          placeholder="源项目标识（示例：projectA-git）"
           class="filter-input"
           clearable
         />
         <el-input
           v-model="localTargetKey"
           size="small"
-          placeholder="目标项目标识（如 projectB-git）"
+          placeholder="目标项目标识（示例：projectB-git）"
           class="filter-input"
           clearable
         />
@@ -33,6 +33,13 @@
         >
           刷新数据
         </el-button>
+        <el-button
+          size="small"
+          icon="el-icon-arrow-left"
+          @click="handleBackToDashboard"
+        >
+          返回概览
+        </el-button>
       </div>
       <div class="batch-controls">
         <el-input
@@ -52,11 +59,9 @@
           icon="el-icon-download"
           @click="handleBatchExport"
         >
-          导出批量相似度
-        </el-button>
+          导出批量相似度        </el-button>
       </div>
     </el-card>
-
     <div v-if="comparison" class="project-overview">
       <el-card class="project-card" shadow="never">
         <template #header>
@@ -84,7 +89,6 @@
           </div>
         </div>
       </el-card>
-
       <el-card class="project-card" shadow="never">
         <template #header>
           <div class="card-header">
@@ -112,7 +116,6 @@
         </div>
       </el-card>
     </div>
-
     <el-card class="file-list-card" shadow="never">
       <template #header>
         <div class="card-header">
@@ -136,7 +139,6 @@
               <div class="file-summary">
                 <div class="file-path">{{ scope.row.filePath }}</div>
               </div>
-
               <div class="diff-columns">
                 <div class="diff-column">
                   <h5>源项目</h5>
@@ -163,7 +165,6 @@
                     <pre class="fallback-snippet">{{ renderBlockFallback(scope.row.source) }}</pre>
                   </div>
                 </div>
-
                 <div class="diff-column">
                   <h5>目标项目</h5>
                   <div v-if="hasGitDiff(scope.row.target)" class="diff-table">
@@ -190,22 +191,7 @@
                   </div>
                 </div>
               </div>
-
               <div v-if="hasDualComparison(scope.row)" class="dual-comparison">
-                <div class="dual-summary">
-                  <div>
-                    <span class="label">文件相似度：</span>
-                    <span>{{ formatPercent(scope.row.dualComparison.fileSimilarity) }}</span>
-                  </div>
-                  <div>
-                    <span class="label">相同行数：</span>
-                    <span>{{ scope.row.dualComparison.sameLineCount }}</span>
-                  </div>
-                  <div>
-                    <span class="label">总变动行数：</span>
-                    <span>{{ scope.row.dualComparison.totalChangedLines }}</span>
-                  </div>
-                </div>
                 <el-table
                   v-if="scope.row.dualComparison.blocks && scope.row.dualComparison.blocks.length"
                   :data="scope.row.dualComparison.blocks"
@@ -226,12 +212,22 @@
                       {{ formatPercent(blockScope.row.similarity) }}
                     </template>
                   </el-table-column>
+                  <el-table-column label="覆盖率（源→目标）" width="150">
+                    <template slot-scope="blockScope">
+                      {{ formatPercent(blockScope.row.sourceCoveragePercent) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="覆盖率（目标→源）" width="150">
+                    <template slot-scope="blockScope">
+                      {{ formatPercent(blockScope.row.targetCoveragePercent) }}
+                    </template>
+                  </el-table-column>
                   <el-table-column prop="sourceChangedLines" label="源变动行" width="120" />
-                  <el-table-column prop="targetChangedLines" label="目标变动行" width="120" />
-                  <el-table-column prop="referenceLineCount" label="计权行数" width="120" />
+                  <el-table-column prop="targetChangedLines" label="目标变动行数" width="120" />
+                  <el-table-column prop="referenceLineCount" label="加权行数" width="120" />
                 </el-table>
+                <el-empty v-else description="暂无块级数据" />
               </div>
-
               <div class="block-comparison">
                 <div class="block-column">
                   <h5>源项目块详情</h5>
@@ -242,7 +238,7 @@
                       class="block-item"
                     >
                       <div class="block-header">
-                        <span>块 {{ index + 1 }}</span>
+                        <span>第{{ index + 1 }}</span>
                         <span>相似度：{{ formatPercent(block.diff?.similarityScore) }}</span>
                       </div>
                       <div class="block-table">
@@ -271,7 +267,7 @@
                       class="block-item"
                     >
                       <div class="block-header">
-                        <span>块 {{ index + 1 }}</span>
+                        <span>第{{ index + 1 }}</span>
                         <span>相似度：{{ formatPercent(block.diff?.similarityScore) }}</span>
                       </div>
                       <div class="block-table">
@@ -297,8 +293,8 @@
         </el-table-column>
         <el-table-column prop="filePath" label="文件" min-width="260" />
         <el-table-column
-          label="增量变动相似度"
-          width="180"
+          label="文件相似度"
+          width="160"
         >
           <template slot-scope="scope">
             <span>
@@ -311,11 +307,67 @@
           </template>
         </el-table-column>
         <el-table-column
+          label="覆盖率（源→目标）"
+          width="180"
+        >
+          <template slot-scope="scope">
+            <span>
+              {{
+                scope.row.dualComparison
+                  ? formatPercent(scope.row.dualComparison.coverageAtoB)
+                  : '-'
+              }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column
+          label="覆盖率（目标→源）"
+          width="180"
+        >
+          <template slot-scope="scope">
+            <span>
+              {{
+                scope.row.dualComparison
+                  ? formatPercent(scope.row.dualComparison.coverageBtoA)
+                  : '-'
+              }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column
+          label="相同行数"
+          width="120"
+        >
+          <template slot-scope="scope">
+            <span>
+              {{
+                scope.row.dualComparison
+                  ? formatInteger(scope.row.dualComparison.sameLineCount)
+                  : '-'
+              }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column
+          label="总变动行数"
+          width="140"
+        >
+          <template slot-scope="scope">
+            <span>
+              {{
+                scope.row.dualComparison
+                  ? formatInteger(scope.row.dualComparison.totalChangedLines)
+                  : '-'
+              }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column
           label="源块数"
           width="120"
         >
           <template slot-scope="scope">
-            <span>{{ scope.row.source?.totalBlocks || 0 }}</span>
+            <span>{{ formatInteger(scope.row.source?.totalBlocks ?? 0) }}</span>
           </template>
         </el-table-column>
         <el-table-column
@@ -323,31 +375,29 @@
           width="120"
         >
           <template slot-scope="scope">
-            <span>{{ scope.row.target?.totalBlocks || 0 }}</span>
+            <span>{{ formatInteger(scope.row.target?.totalBlocks ?? 0) }}</span>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
   </div>
 </template>
-
 <script>
-  import { mapState, mapGetters, mapActions } from 'vuex';
-  import dayjs from 'dayjs';
-  import { exportGitComparisonBatch } from '@/api/gitComparison';
-
+import { mapState, mapGetters, mapActions } from 'vuex';
+import dayjs from 'dayjs';
+import { exportGitComparisonBatch } from '@/api/gitComparison';
 export default {
   name: 'GitComparisonView',
-    data() {
-      return {
-        localSourceKey: '',
-        localTargetKey: '',
-        expandedKeys: [],
-        batchConfigPath: '',
-        batchRefresh: false,
-        exporting: false,
-      };
-    },
+  data() {
+    return {
+      localSourceKey: '',
+      localTargetKey: '',
+      expandedKeys: [],
+      batchConfigPath: '',
+      batchRefresh: false,
+      exporting: false,
+    };
+  },
   computed: {
     ...mapState('gitComparison', [
       'overview',
@@ -452,6 +502,9 @@ export default {
         this.persistKeys();
       }
     },
+    handleBackToDashboard() {
+      this.$router.push({ name: 'Dashboard' });
+    },
     async handleFetch() {
       this.setSourceProjectKey((this.localSourceKey || '').trim());
       this.setTargetProjectKey((this.localTargetKey || '').trim());
@@ -459,87 +512,87 @@ export default {
       await this.fetchComparison();
       this.persistKeys();
     },
-      async handleRefresh() {
-        this.setSourceProjectKey((this.localSourceKey || '').trim());
-        this.setTargetProjectKey((this.localTargetKey || '').trim());
-        this.expandedKeys = [];
-        await this.fetchComparison({ refresh: true });
-        this.persistKeys();
-      },
-      async handleBatchExport() {
-        if (this.exporting) {
-          return;
+    async handleRefresh() {
+      this.setSourceProjectKey((this.localSourceKey || '').trim());
+      this.setTargetProjectKey((this.localTargetKey || '').trim());
+      this.expandedKeys = [];
+      await this.fetchComparison({ refresh: true });
+      this.persistKeys();
+    },
+    async handleBatchExport() {
+      if (this.exporting) {
+        return;
+      }
+      this.exporting = true;
+      try {
+        const params = {};
+        const trimmedPath = (this.batchConfigPath || '').trim();
+        if (trimmedPath) {
+          params.configPath = trimmedPath;
         }
-        this.exporting = true;
-        try {
-          const params = {};
-          const trimmedPath = (this.batchConfigPath || '').trim();
-          if (trimmedPath) {
-            params.configPath = trimmedPath;
-          }
-          if (this.batchRefresh) {
-            params.refresh = true;
-          }
-          const response = await exportGitComparisonBatch(params);
-          const { data, headers } = response || {};
-          if (!data) {
-            throw new Error('未获取到导出数据');
-          }
-          const contentType = headers?.['content-type']
-            || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-          const blob = new Blob([data], { type: contentType });
-          const filename = this.resolveExportFilename(headers) || this.buildFallbackFilename();
-          const link = document.createElement('a');
-          const url = window.URL.createObjectURL(blob);
-          link.href = url;
-          link.download = filename;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          window.URL.revokeObjectURL(url);
-          this.$message.success('批量导出任务已完成');
-        } catch (error) {
-          console.error('[批量导出失败]', error);
-          const message = error?.response?.data?.message || error.message || '批量导出失败';
-          this.$message.error(message);
-        } finally {
-          this.exporting = false;
+        if (this.batchRefresh) {
+          params.refresh = true;
         }
-      },
-      resolveExportFilename(headers = {}) {
-        const disposition = headers['content-disposition'] || headers['Content-Disposition'];
-        if (!disposition) {
-          return '';
+        const response = await exportGitComparisonBatch(params);
+        const { data, headers } = response || {};
+        if (!data) {
+          throw new Error('未获取到导出数据');
         }
-        const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
-        if (utf8Match && utf8Match[1]) {
-          try {
-            return decodeURIComponent(utf8Match[1]);
-          } catch (error) {
-            console.warn('Decode UTF-8 filename failed', error);
-            return utf8Match[1];
-          }
-        }
-        const simpleMatch = disposition.match(/filename="?([^";]+)"?/i);
-        if (simpleMatch && simpleMatch[1]) {
-          try {
-            return decodeURIComponent(simpleMatch[1]);
-          } catch (error) {
-            console.warn('Decode filename failed', error);
-            return simpleMatch[1];
-          }
-        }
+        const contentType = headers?.['content-type']
+          || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        const blob = new Blob([data], { type: contentType });
+        const filename = this.resolveExportFilename(headers) || this.buildFallbackFilename();
+        const link = document.createElement('a');
+        const url = window.URL.createObjectURL(blob);
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+        this.$message.success('批量导出任务已完成');
+      } catch (error) {
+        console.error('[批量导出失败]', error);
+        const message = error?.response?.data?.message || error.message || '批量导出失败';
+        this.$message.error(message);
+      } finally {
+        this.exporting = false;
+      }
+    },
+    resolveExportFilename(headers = {}) {
+      const disposition = headers['content-disposition'] || headers['Content-Disposition'];
+      if (!disposition) {
         return '';
-      },
-      buildFallbackFilename() {
-        const now = new Date();
-        const pad = (value) => String(value).padStart(2, '0');
-        const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-        return `git-comparison-${timestamp}.xlsx`;
-      },
-      handleExpandChange(row, expandedRows) {
-        this.expandedKeys = expandedRows.map((item) => item.filePath);
-      },
+      }
+      const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+      if (utf8Match && utf8Match[1]) {
+        try {
+          return decodeURIComponent(utf8Match[1]);
+        } catch (error) {
+          console.warn('Decode UTF-8 filename failed', error);
+          return utf8Match[1];
+        }
+      }
+      const simpleMatch = disposition.match(/filename="?([^";]+)"?/i);
+      if (simpleMatch && simpleMatch[1]) {
+        try {
+          return decodeURIComponent(simpleMatch[1]);
+        } catch (error) {
+          console.warn('Decode filename failed', error);
+          return simpleMatch[1];
+        }
+      }
+      return '';
+    },
+    buildFallbackFilename() {
+      const now = new Date();
+      const pad = (value) => String(value).padStart(2, '0');
+      const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      return `git-comparison-${timestamp}.xlsx`;
+    },
+    handleExpandChange(row, expandedRows) {
+      this.expandedKeys = expandedRows.map((item) => item.filePath);
+    },
     hasDualComparison(row) {
       if (!row || !row.dualComparison) {
         return false;
@@ -553,6 +606,16 @@ export default {
         return '-';
       }
       return `${Number(value).toFixed(1)}%`;
+    },
+    formatInteger(value) {
+      if (value === null || value === undefined) {
+        return '-';
+      }
+      const num = Number(value);
+      if (Number.isNaN(num)) {
+        return '-';
+      }
+      return Math.round(num).toString();
     },
     formatMatchStatus(status) {
       if (!status) {
@@ -679,13 +742,13 @@ export default {
     },
     renderBlockFallback(detail) {
       if (!detail || !detail.blocks) {
-        return '未检测到差异块';
+        return '未检测到差异';
       }
       return detail.blocks
         .map((block, index) => {
           const source = (block.diff?.sourceContent || '').trim();
           const target = (block.diff?.targetContent || '').trim();
-          return `# 块 ${index + 1}\n源内容：\n${source || '-'}\n\n目标内容：\n${target || '-'}`;
+          return `# 第${index + 1}\n源内容：\n${source || '-'}\n\n目标内容：\n${target || '-'}`;
         })
         .join('\n\n');
     },
@@ -760,57 +823,47 @@ export default {
   },
 };
 </script>
-
 <style lang="scss" scoped>
 .git-comparison-view {
   padding: 16px;
-
   .filter-card {
     margin-bottom: 16px;
-
-      .filters {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-
-        .filter-input {
-          width: 220px;
-        }
-      }
-      .batch-controls {
-        margin-top: 12px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-
-        .batch-input {
-          flex: 1;
-          min-width: 260px;
-        }
-
-        .batch-toggle {
-          white-space: nowrap;
-        }
+    .filters {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      .filter-input {
+        width: 220px;
       }
     }
-
-    .project-overview {
+    .batch-controls {
+      margin-top: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      .batch-input {
+        flex: 1;
+        min-width: 260px;
+      }
+      .batch-toggle {
+        white-space: nowrap;
+      }
+    }
+  }
+  .project-overview {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 16px;
     margin-bottom: 16px;
-
     .project-card {
       .project-meta {
         display: grid;
         gap: 6px;
         font-size: 12px;
-
         .meta-item {
           display: flex;
           gap: 4px;
           color: #606266;
-
           .label {
             color: #303133;
             font-weight: 600;
@@ -819,44 +872,37 @@ export default {
       }
     }
   }
-
   .card-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     font-weight: 600;
   }
-
   .file-list-card {
     margin-top: 16px;
   }
-
   .expand-panel {
     padding: 16px 0;
     display: flex;
     flex-direction: column;
     gap: 16px;
   }
-
   .file-summary {
     display: flex;
     justify-content: space-between;
     align-items: center;
     font-size: 13px;
     color: #303133;
-
     .file-path {
       font-weight: 600;
       word-break: break-all;
     }
   }
-
   .diff-columns {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 16px;
   }
-
   .diff-column {
     h5 {
       margin: 0 0 8px;
@@ -864,7 +910,6 @@ export default {
       font-weight: 600;
     }
   }
-
   .diff-table {
     border: 1px solid #ebeef5;
     border-radius: 4px;
@@ -872,16 +917,13 @@ export default {
     font-family: 'Fira Code', 'Courier New', monospace;
     font-size: 12px;
   }
-
   .diff-row {
     display: grid;
     grid-template-columns: 60px 1fr 60px 1fr;
     border-bottom: 1px solid #ebeef5;
-
     &:last-child {
       border-bottom: none;
     }
-
     &.context {
       background: #fff;
     }
@@ -907,7 +949,6 @@ export default {
       color: #409eff;
       font-weight: 600;
     }
-
     .line-no {
       padding: 4px 6px;
       text-align: right;
@@ -915,14 +956,12 @@ export default {
       background: #f5f7fa;
       border-right: 1px solid #ebeef5;
     }
-
     .line-content {
       padding: 4px 6px;
       white-space: pre;
       word-break: break-word;
     }
   }
-
   .diff-fallback {
     .fallback-snippet {
       margin-top: 12px;
@@ -934,56 +973,36 @@ export default {
       white-space: pre-wrap;
     }
   }
-
   .dual-comparison {
     margin-top: 16px;
     border: 1px solid #ebeef5;
     border-radius: 4px;
     background: #f9fafc;
     padding: 16px;
-
-    .dual-summary {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 16px;
-      font-size: 13px;
-      color: #303133;
-
-      .label {
-        color: #909399;
-        margin-right: 6px;
-      }
-    }
-
     .dual-table {
       margin-top: 12px;
     }
   }
-
   .block-comparison {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 16px;
-
     .block-column {
       h5 {
         margin: 0 0 8px;
         font-size: 14px;
         font-weight: 600;
       }
-
       .block-list {
         display: flex;
         flex-direction: column;
         gap: 12px;
       }
-
       .block-item {
         border: 1px solid #ebeef5;
         border-radius: 4px;
         background: #fff;
       }
-
       .block-header {
         display: flex;
         justify-content: space-between;
@@ -992,7 +1011,6 @@ export default {
         font-size: 12px;
         color: #303133;
       }
-
       .block-table {
         font-family: 'Fira Code', 'Courier New', monospace;
         font-size: 12px;
@@ -1001,4 +1019,3 @@ export default {
   }
 }
 </style>
-

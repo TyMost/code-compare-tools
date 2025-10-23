@@ -21,6 +21,8 @@ public final class DualIncrementalComparisonBlockView {
     private final String blockType;
     private final String changeType;
     private final String matchStatus;
+    private final double sourceCoveragePercent;
+    private final double targetCoveragePercent;
 
     private DualIncrementalComparisonBlockView(Builder builder) {
         this.index = Math.max(0, builder.index);
@@ -33,6 +35,8 @@ public final class DualIncrementalComparisonBlockView {
         this.blockType = builder.blockType;
         this.changeType = builder.changeType;
         this.matchStatus = builder.matchStatus;
+        this.sourceCoveragePercent = clamp(builder.sourceCoveragePercent);
+        this.targetCoveragePercent = clamp(builder.targetCoveragePercent);
     }
 
     public static Builder builder() {
@@ -79,6 +83,24 @@ public final class DualIncrementalComparisonBlockView {
         return matchStatus;
     }
 
+    public double getSourceCoveragePercent() {
+        return sourceCoveragePercent;
+    }
+
+    public double getTargetCoveragePercent() {
+        return targetCoveragePercent;
+    }
+
+    private double clamp(double value) {
+        if (value < 0d) {
+            return 0d;
+        }
+        if (value > 100d) {
+            return 100d;
+        }
+        return value;
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     @JsonPOJOBuilder(withPrefix = "")
     public static final class Builder {
@@ -92,6 +114,8 @@ public final class DualIncrementalComparisonBlockView {
         private String blockType;
         private String changeType;
         private String matchStatus;
+        private double sourceCoveragePercent;
+        private double targetCoveragePercent;
 
         public Builder() {
         }
@@ -143,6 +167,16 @@ public final class DualIncrementalComparisonBlockView {
 
         public Builder matchStatus(@JsonProperty("matchStatus") String matchStatus) {
             this.matchStatus = matchStatus;
+            return this;
+        }
+
+        public Builder sourceCoveragePercent(@JsonProperty("sourceCoveragePercent") double sourceCoveragePercent) {
+            this.sourceCoveragePercent = sourceCoveragePercent;
+            return this;
+        }
+
+        public Builder targetCoveragePercent(@JsonProperty("targetCoveragePercent") double targetCoveragePercent) {
+            this.targetCoveragePercent = targetCoveragePercent;
             return this;
         }
 

@@ -62,7 +62,13 @@ export default {
       );
     },
     disableUndo() {
-      return this.status !== 'migrated_with_annotation';
+      const normalized = (this.status || '').toLowerCase();
+      const undoableStatuses = [
+        'migrated_with_annotation',
+        'annotated_copy',
+        'annotated',
+      ];
+      return !undoableStatuses.includes(normalized);
     },
     disableApply() {
       return ['migrated', 'applied', 'ignored'].includes(this.status);

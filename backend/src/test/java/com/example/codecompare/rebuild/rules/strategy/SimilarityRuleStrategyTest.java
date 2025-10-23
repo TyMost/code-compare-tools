@@ -1,4 +1,4 @@
-﻿package com.example.codecompare.rebuild.rules.strategy;
+package com.example.codecompare.rebuild.rules.strategy;
 
 import com.example.codecompare.rebuild.block.model.BlockDiff;
 import com.example.codecompare.rebuild.rules.RuleDefinition;

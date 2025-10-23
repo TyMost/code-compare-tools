@@ -23,6 +23,8 @@ public class CodeBlockDetailView {
     private final boolean aiSuggestionEnabled;
     private final String previousId;
     private final String nextId;
+    private final String diffMode;
+    private final List<DiffSegmentView> diffSegments;
 
     public CodeBlockDetailView(String id,
                                String comparisonId,
@@ -38,7 +40,9 @@ public class CodeBlockDetailView {
                                List<String> categoryKeys,
                                boolean aiSuggestionEnabled,
                                String previousId,
-                               String nextId) {
+                               String nextId,
+                               String diffMode,
+                               List<DiffSegmentView> diffSegments) {
         this.id = id;
         this.comparisonId = comparisonId;
         this.sourceProjectCode = sourceProjectCode;
@@ -54,6 +58,8 @@ public class CodeBlockDetailView {
         this.aiSuggestionEnabled = aiSuggestionEnabled;
         this.previousId = previousId;
         this.nextId = nextId;
+        this.diffMode = diffMode == null || diffMode.trim().isEmpty() ? "full" : diffMode.trim();
+        this.diffSegments = diffSegments == null ? Collections.emptyList() : Collections.unmodifiableList(diffSegments);
     }
 
     public String getId() {
@@ -114,5 +120,13 @@ public class CodeBlockDetailView {
 
     public String getNextId() {
         return nextId;
+    }
+
+    public String getDiffMode() {
+        return diffMode;
+    }
+
+    public List<DiffSegmentView> getDiffSegments() {
+        return diffSegments;
     }
 }

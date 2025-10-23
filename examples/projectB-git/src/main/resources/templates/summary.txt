@@ -1,0 +1,4 @@
+﻿# Summary Template
+Total Requests: {{requests}}
+Peak Load: {{peak}}
+Owner: analytics

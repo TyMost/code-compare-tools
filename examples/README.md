@@ -1,41 +1,48 @@
-# 示例项目说明
+# Git 对比演示数据
 
-`examples/` 目录用于演示 `rules.yaml` 中的迁移标签如何在真实代码块上命中。目录下维护一对源/目标仓库，以及两份带 Git 历史的演示仓库：
-- `projectA/`：迁移前的基线工程，保留 `LEGACY::` 前缀、`token.substring` 等旧实现。
-- `projectB/`：迁移后的目标工程，应用 `encoder.encode / encoder.decodeTenant`、`override` 等新实现。
-- `projectA-git/`、`projectB-git/`：与上述目录内容一致，但会通过 `init-git-history.sh` 初始化真实 Git 历史，便于演示增量扫描（如 `gitBaseRefSource/Target` 对比）。
-- `manifest.yaml`：根据代码行数统计出的分类结果，数据直接对应后端的规则标签。
+此目录包含用于验证传统覆盖流程和新的增量 diff / 迁移流程的轻量级 Git 仓库。
 
-代码统计以“代码块”为单位（即同名文件在 A/B 仓库的合计行数），并按照 `rules.yaml` 的标签做聚合。“约等于”指标来自于 `manifest.yaml` 的 `actualPercent` 字段。
+## 仓库矩阵
 
-## 分类占比概览（按代码行数）
-| 分类             | 目标占比 | 实际行数 | 实际占比 | 代表代码块 |
-| ---------------- | -------- | -------- | -------- | ---------- |
-| 已迁移           | ≈60%     | 283      | 56.37%   | `common/EncodingGateway.java`、`dashboard/DashboardAggregator.java`、`workflow/ApprovalWorkflow.java` |
-| 语法改造         | ≈19%     | 98       | 19.52%   | `order/DiscountCalculator.java`、`order/OrderMapper.java` |
-| 分片改造         | ≈10%     | 56       | 11.16%   | `shard/TenantShardResolver.java` |
-| 配置改造         | ≈5%      | 26       | 5.18%    | `config/CheckoutConfiguration.java`、`resources/config/checkout-feature.yml` |
-| 未迁移           | ≈3%      | 15       | 2.99%    | `legacy/LegacyPromotionService.java` |
-| 其他（剩余部分） | ≈3%      | 24       | 4.78%    | `integration/PlatformBridge.java` |
+| 代码 | 角色 | 基准引用 | 目标引用 | 亮点 |
+| --- | --- | --- | --- | --- |
+| `projectA-git` | 源仓库 | `refs/heads/main` | `refs/heads/feature/git-demo` | 原始覆盖率演示数据集。 |
+| `projectB-git` | 目标仓库 | `refs/heads/main` | `refs/heads/release/git-demo` | `projectA-git` 的配套仓库，用于演练匹配和不匹配的覆盖块。 |
+| `projectC-git/source-app` | 源仓库 | `refs/heads/main` | `refs/heads/feature/incremental-demo` | 展示新增、删除和修改案例的增量 diff 示例。 |
+| `projectC-git/target-app` | 目标仓库 | `refs/heads/main` | `refs/heads/feature/incremental-demo` | 与 `source-app` 对应，便于流水线呈现并排的增量 diff。 |
 
-> 统计总行数为 502 行，误差控制在 ±3% 范围内，满足“约等于”的要求。
+> 提示：`projectC-git` 含有两个独立的 Git 仓库。验证增量模式时，将 `migration.scan.project.sources` 与 `migration.scan.project.targets` 指向相应的文件夹。
 
-## 对应规则速查
+## 覆盖演示（projectA-git vs projectB-git）
 
-| 规则 ID                    | 说明                           | 典型命中文件                                     |
-| -------------------------- | ------------------------------ | ------------------------------------------------ |
-| `replace-syntax`           | `LEGACY::` → `encoder.encode`  | `order/DiscountCalculator.java`、`order/OrderMapper.java` |
-| `replace-decode`           | `token.substring` → `encoder.decodeTenant` | `shard/TenantShardResolver.java` |
-| `feature-flag-refactor`    | `setNewCheckout` → `override`  | `config/CheckoutConfiguration.java` |
-| `channel-mapping-refactor` | `new HashMap` → `Map.copyOf`   | `integration/ChannelMappingRegistry.java` |
-| `similarity-high`          | 高相似度命中“已迁移”           | `common/EncodingGateway.java` 等 |
-| `similarity-low`           | 低相似度命中“未迁移”           | `legacy/LegacyPromotionService.java` |
+- `src/main/java/com/example/demo/Calculator.java`：双方都进行了修改，会生成部分相似的覆盖片段。
+- `src/main/java/com/example/demo/report/UsageReport.java`：双方都新增了该文件但内容不同，可用于演示低于 100% 匹配度的新增块。
+- `docs/migration-plan.md`（仅源端）与 `docs/modernization-checklist.md`（仅目标端）：展示不匹配的新增内容。
+- `docs/legacy-guidelines.md`：两个分支都删除了此文件，形成匹配的删除块。
+- `src/main/java/com/example/demo/analytics/TrendAnalyzer.java`：目标端新增，整体覆盖率因此下降。
 
-## 使用建议
+## 增量 Diff 速查表（projectC-git）
 
-1. 运行 `examples/init-git-history.sh` 可为四个项目写入演示用 Git 历史（若需重置请先删除对应 `.git` 目录）。
-2. 调整规则后，先更新 `manifest.yaml` 中的行数与占比，再运行后端扫描以核对标签命中情况。
-3. 新增示例时，请确保：
-   - 同名文件在 `projectA/` 与 `projectB/`（或对应 git 版本）下均存在（未迁移项例外）。
-   - 将新增代码块归入上述分类之一，并更新 `manifest.yaml` 与本 README。
-4. 若需要扩展“其他”占比，可在 `integration/` 或 `innovation/` 目录添加保持最小改动的样例。
+| 变更类型 | 源端（`feature/incremental-demo`） | 目标端（`feature/incremental-demo`） |
+| --- | --- | --- |
+| 修改 | `source-app/src/main/java/com/example/service/UserService.java` 增加空值保护和周年标签 | `target-app/src/main/java/com/example/order/OrderService.java` 新增四舍五入与忠诚度积分逻辑 |
+| 新增 | `source-app/src/main/java/com/example/analytics/UsageTracker.java` | `target-app/src/main/java/com/example/billing/BillingReconciliation.java` |
+| 删除 | `source-app/src/main/java/com/example/legacy/LegacyReportGenerator.java` | `target-app/src/main/java/com/example/maintenance/LegacyCleanupTask.java` |
+| 配置差异 | `source-app/src/main/resources/application.properties` 调整超时与功能开关 | `target-app/src/main/resources/application.properties` 修改日志级别并启用对账功能 |
+
+在每个仓库中运行 `git diff main feature/incremental-demo` 可以查看原始变更。随后启用 `migration.scan.diffEngine: git`，验证新的 diff 片段、并排渲染以及迁移动作（生成 / 应用 / 撤销）。
+
+## 快速开始
+
+1. 更新 `backend/src/main/resources/application.yml`，指向目标仓库及分支。
+2. 运行扫描或 Git 对比导出，例如：
+   ```powershell
+   mvn -f backend/pom.xml -DskipTests spring-boot:run
+   ```
+   或者：
+   ```powershell
+   mvn -f backend/pom.xml -DskipTests exec:java -Dexec.args="--batch git-comparison"
+   ```
+3. 打开界面（`git-comparison` 仪表盘或迁移详情页），选择需要查看的项目对。
+
+要重置数据集，请在仓库中检出 `main` 分支并删除对应的 feature 分支。

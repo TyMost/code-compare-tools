@@ -1,5 +1,6 @@
 package com.example.codecompare.rebuild.stats;
 
+import com.example.codecompare.rebuild.block.model.BlockDiff;
 import com.example.codecompare.rebuild.core.support.ProjectRootRegistry;
 import com.example.codecompare.rebuild.core.support.ProjectRootRegistry.ProjectRootDescriptor;
 import com.example.codecompare.rebuild.scanning.BlockLabelConstants;
@@ -358,7 +359,9 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
                 status,
                 statusLabel,
                 statusColor,
-                lineCount
+                lineCount,
+                record.getDiff(),
+                snapshot.getDiffMode()
         );
     }
 
@@ -755,6 +758,8 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
         private final String statusLabel;
         private final String statusColor;
         private final Integer lineCount;
+        private final BlockDiff diff;
+        private final String diffMode;
 
         public BlockItem(String id,
                          String comparisonId,
@@ -770,7 +775,9 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
                          String status,
                          String statusLabel,
                          String statusColor,
-                         Integer lineCount) {
+                         Integer lineCount,
+                         BlockDiff diff,
+                         String diffMode) {
             this.id = id;
             this.comparisonId = comparisonId;
             this.sourceProjectCode = sourceProjectCode;
@@ -786,6 +793,8 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
             this.statusLabel = statusLabel;
             this.statusColor = statusColor;
             this.lineCount = lineCount;
+            this.diff = diff;
+            this.diffMode = diffMode == null || diffMode.trim().isEmpty() ? "full" : diffMode.trim();
         }
 
         public String getId() {
@@ -846,6 +855,14 @@ public class MetricsAggregator implements ApplicationListener<ScanCompletedEvent
 
         public Integer getLineCount() {
             return lineCount;
+        }
+
+        public BlockDiff getDiff() {
+            return diff;
+        }
+
+        public String getDiffMode() {
+            return diffMode;
         }
     }
 }
