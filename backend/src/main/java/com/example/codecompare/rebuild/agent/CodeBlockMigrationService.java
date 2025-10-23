@@ -1,6 +1,7 @@
 package com.example.codecompare.rebuild.agent;
 
 import com.example.codecompare.rebuild.agent.config.MigrationAnnotationProperties;
+import com.example.codecompare.rebuild.agent.migration.LineEndingNormalizer;
 import com.example.codecompare.rebuild.agent.migration.FileMigrationGroup;
 import com.example.codecompare.rebuild.agent.migration.MigrationCandidate;
 import com.example.codecompare.rebuild.agent.migration.MigrationGroupingService;
@@ -24,6 +25,7 @@ import org.springframework.util.StringUtils;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -107,7 +109,7 @@ public class CodeBlockMigrationService {
                 CodeBlockDetailDTO detail = detailOptional.get();
                 if (!StringUtils.hasText(detail.getOldCode())) {
                     skipped++;
-                    log.info("代码块缺少源代码，跳过生成注释blockId={}", blockId);
+                    log.info("浠ｇ爜鍧楃己灏戞簮浠ｇ爜锛岃烦杩囩敓鎴愭敞閲奲lockId={}", blockId);
                     continue;
                 }
                 Optional<BlockDecisionSnapshot> snapshotOptional = loadSnapshot(detail);
@@ -125,7 +127,7 @@ public class CodeBlockMigrationService {
                 String annotated = rendered.getContent();
                 if (annotated.equals(detail.getNewCode()) && LABEL_ANNOTATED.equalsIgnoreCase(detail.getStatus())) {
                     skipped++;
-                    log.debug("代码块已存在注解拷贝，跳过重复生成blockId={}", blockId);
+                    log.debug("浠ｇ爜鍧楀凡瀛樺湪娉ㄨВ鎷疯礉锛岃烦杩囬噸澶嶇敓鎴恇lockId={}", blockId);
                     continue;
                 }
                 BlockDecisionSnapshot updated = blockDecisionMutationService.updateSnapshot(snapshot, blockId,
@@ -144,9 +146,9 @@ public class CodeBlockMigrationService {
                         });
                 blockDecisionRepository.save(updated);
                 succeeded++;
-                log.info("完成注解拷贝 blockId={} file={}", blockId, detail.getFilePath());
+                log.info("瀹屾垚娉ㄨВ鎷疯礉 blockId={} file={}", blockId, detail.getFilePath());
             } catch (Exception ex) {
-                log.warn("注解拷贝失败 blockId={}", blockId, ex);
+                log.warn("娉ㄨВ鎷疯礉澶辫触 blockId={}", blockId, ex);
                 failures.add(blockId + ": " + ex.getMessage());
             }
         }
@@ -188,9 +190,9 @@ public class CodeBlockMigrationService {
         if (CollectionUtils.isEmpty(blockIds)) {
             return new MigrationOperationResult(0, 0, 0, Collections.<String>emptyList());
         }
-        int succeeded = 0;
         int skipped = 0;
         List<String> failures = new ArrayList<String>();
+        List<UndoCandidate> candidates = new ArrayList<UndoCandidate>();
         for (String blockId : blockIds) {
             if (!StringUtils.hasText(blockId)) {
                 skipped++;
@@ -203,6 +205,10 @@ public class CodeBlockMigrationService {
                     continue;
                 }
                 CodeBlockDetailDTO detail = detailOptional.get();
+                if (!StringUtils.hasText(detail.getTargetProjectCode()) || !StringUtils.hasText(detail.getFilePath())) {
+                    failures.add(blockId + ": 缺少目标项目或文件路径信息");
+                    continue;
+                }
                 Optional<BlockDecisionSnapshot> snapshotOptional = loadSnapshot(detail);
                 if (!snapshotOptional.isPresent()) {
                     failures.add(blockId + ": 缺少差异快照数据");
@@ -210,32 +216,103 @@ public class CodeBlockMigrationService {
                 }
                 BlockDecisionSnapshot snapshot = snapshotOptional.get();
                 BlockDecisionRecord record = blockDecisionMutationService.findBlockRecord(snapshot, blockId);
-                if (record == null) {
-                    failures.add(blockId + ": 未找到对应的代码块记录");
+                if (record == null || record.getDiff() == null) {
+                    failures.add(blockId + ": 缺少差异片段信息");
                     continue;
                 }
                 if (!blockDecisionMutationService.isUndoAvailable(record)) {
-                    log.info("代码块尚未生成注解，跳过撤销操作 blockId={}", blockId);
+                    log.info("代码块缺少撤销备份，跳过撤销操作 blockId={}", blockId);
                     skipped++;
                     continue;
                 }
-                BlockDecisionSnapshot updated = blockDecisionMutationService.updateSnapshot(snapshot, blockId,
-                        new Function<BlockDecisionRecord, BlockDecisionRecord>() {
-                            @Override
-                            public BlockDecisionRecord apply(BlockDecisionRecord original) {
-                                return blockDecisionMutationService.buildRevertedRecord(original);
-                            }
-                        });
-                blockDecisionRepository.save(updated);
-                succeeded++;
+                int referenceLine = resolveReferenceLine(record.getDiff(), detail);
+                candidates.add(new UndoCandidate(blockId, detail, snapshot, referenceLine));
             } catch (Exception ex) {
-                log.warn("撤销代码块时发生异常 blockId={}", blockId, ex);
+                log.warn("准备撤销代码块时发生异常 blockId={}", blockId, ex);
                 failures.add(blockId + ": " + ex.getMessage());
+            }
+        }
+        if (candidates.isEmpty()) {
+            return new MigrationOperationResult(blockIds.size(), 0, skipped, failures);
+        }
+        int succeeded = 0;
+        List<UndoFileGroup> groups = groupUndoCandidates(candidates);
+        for (UndoFileGroup group : groups) {
+            UndoCandidate primary = group.getPrimaryCandidate();
+            if (primary == null) {
+                continue;
+            }
+            String lockKey = buildFileLockKey(primary.getDetail());
+            ReentrantLock fileLock = acquireFileLock(lockKey);
+            fileLock.lock();
+            try {
+                BlockDecisionSnapshot workingSnapshot = diffSynchronizationService.refreshSnapshotForMigration(primary.getSnapshot());
+                if (workingSnapshot == null) {
+                    failures.add(primary.getBlockId() + ": 无法刷新差异数据");
+                    continue;
+                }
+                List<UndoCandidate> ordered = new ArrayList<UndoCandidate>(group.getCandidates());
+                ordered.sort(new java.util.Comparator<UndoCandidate>() {
+                    @Override
+                    public int compare(UndoCandidate left, UndoCandidate right) {
+                        return Integer.compare(right.getReferenceLine(), left.getReferenceLine());
+                    }
+                });
+                for (UndoCandidate candidate : ordered) {
+                    try {
+                        BlockDecisionRecord record = blockDecisionMutationService.findBlockRecord(workingSnapshot, candidate.getBlockId());
+                        if (record == null || record.getDiff() == null) {
+                            failures.add(candidate.getBlockId() + ": 缺少差异片段信息");
+                            continue;
+                        }
+                        if (!blockDecisionMutationService.isUndoAvailable(record)) {
+                            log.info("代码块缺少撤销备份，跳过撤销操作 blockId={}", candidate.getBlockId());
+                            skipped++;
+                            continue;
+                        }
+                        BlockDecisionRecord revertedRecord = blockDecisionMutationService.buildRevertedRecord(record);
+                        InsertionResult revertResult = revertAnnotatedContent(
+                                candidate.getBlockId(),
+                                candidate.getDetail(),
+                                record,
+                                revertedRecord,
+                                candidate.getReferenceLine());
+                        if (revertResult.isSkipped()) {
+                            failures.add(candidate.getBlockId() + ": 未定位到待撤销的迁移代码片段");
+                            continue;
+                        }
+                        BlockDecisionSnapshot updated = blockDecisionMutationService.updateSnapshot(workingSnapshot, candidate.getBlockId(),
+                                new Function<BlockDecisionRecord, BlockDecisionRecord>() {
+                                    @Override
+                                    public BlockDecisionRecord apply(BlockDecisionRecord original) {
+                                        return blockDecisionMutationService.buildRevertedRecord(original);
+                                    }
+                                });
+                        blockDecisionRepository.save(updated);
+                        workingSnapshot = diffSynchronizationService.refreshSnapshotForMigration(updated);
+                        if (workingSnapshot == null) {
+                            workingSnapshot = updated;
+                        }
+                        succeeded++;
+                        logRevertResult(candidate, revertResult);
+                    } catch (Exception ex) {
+                        log.warn("撤销代码块失败 blockId={}", candidate.getBlockId(), ex);
+                        failures.add(candidate.getBlockId() + ": " + ex.getMessage());
+                    }
+                }
+                if (workingSnapshot != null) {
+                    BlockDecisionSnapshot refreshedSnapshot = diffSynchronizationService.refreshSiblingDiffs(primary.getDetail(), workingSnapshot);
+                    if (refreshedSnapshot != workingSnapshot) {
+                        blockDecisionRepository.save(refreshedSnapshot);
+                    }
+                }
+            } finally {
+                fileLock.unlock();
+                releaseFileLock(lockKey, fileLock);
             }
         }
         return new MigrationOperationResult(blockIds.size(), succeeded, skipped, failures);
     }
-
     /**
      * Applies annotated copies into target project files.
      */
@@ -259,7 +336,7 @@ public class CodeBlockMigrationService {
                 }
                 CodeBlockDetailDTO detail = detailOptional.get();
                 if (!StringUtils.hasText(detail.getNewCode())) {
-                    failures.add(blockId + ": 请先执行生成注解步骤");
+                    failures.add(blockId + ": 请先执行生成注解操作");
                     continue;
                 }
                 if (!StringUtils.hasText(detail.getTargetProjectCode()) || !StringUtils.hasText(detail.getFilePath())) {
@@ -278,17 +355,21 @@ public class CodeBlockMigrationService {
                     continue;
                 }
                 BlockDiff diff = existingRecord.getDiff();
-                RenderedAnnotation rendered = annotationRenderingService.renderWithTemplateKey(detail, diff, blockId, "migrate_adapt");
+                boolean hasTargetBaseline = diff != null && StringUtils.hasText(diff.getTargetContent());
+                String templateKeyToUse = hasTargetBaseline ? "migrate_adapt" : "default";
+                RenderedAnnotation rendered = annotationRenderingService.renderWithTemplateKey(detail, diff, blockId, templateKeyToUse);
                 String annotated = rendered != null
                         ? annotationRenderingService.normalizeLineEndings(rendered.getContent())
                         : annotationRenderingService.normalizeLineEndings(detail.getNewCode());
-                List<String> expectedOriginal = diff != null && !CollectionUtils.isEmpty(diff.getTargetLines())
-                        ? diff.getTargetLines()
-                        : Collections.<String>emptyList();
-                String templateKey = rendered != null ? rendered.getTemplateKey() : "migrate_adapt";
-                candidates.add(new MigrationCandidate(blockId, detail, snapshot, existingRecord, annotated, diff, expectedOriginal, templateKey));
+                List<String> expectedOriginal = Collections.<String>emptyList();
+                if (hasTargetBaseline && diff != null && !CollectionUtils.isEmpty(diff.getTargetLines())) {
+                    expectedOriginal = diff.getTargetLines();
+                }
+                String template = rendered != null ? rendered.getTemplate() : null;
+                String templateKey = rendered != null ? rendered.getTemplateKey() : templateKeyToUse;
+                candidates.add(new MigrationCandidate(blockId, detail, snapshot, existingRecord, annotated, diff, expectedOriginal, template, templateKey));
             } catch (Exception ex) {
-                log.warn("应用迁移代码失败 blockId={}", blockId, ex);
+                log.warn("搴旂敤杩佺Щ浠ｇ爜澶辫触 blockId={}", blockId, ex);
                 failures.add(blockId + ": " + ex.getMessage());
             }
         }
@@ -344,20 +425,41 @@ public class CodeBlockMigrationService {
                                 .build();
                         InsertionResult insertionResult = applyAnnotatedContent(candidate, diffForWrite,
                                 referenceStartLine, expectedOriginal);
-                        BlockDiff appliedDiff = BlockDiff.from(diffForWrite)
+                        List<String> appliedSnippet = insertionResult.getSnippet();
+                        if (CollectionUtils.isEmpty(appliedSnippet)) {
+                            String normalizedAnnotated = LineEndingNormalizer.normalize(candidate.getAnnotatedCode());
+                            appliedSnippet = LineEndingNormalizer.splitLines(normalizedAnnotated);
+                        }
+                        String snippetContent = CollectionUtils.isEmpty(appliedSnippet)
+                                ? LineEndingNormalizer.normalize(candidate.getAnnotatedCode())
+                                : LineEndingNormalizer.joinLines(appliedSnippet);
+                        BlockDiff.Builder appliedDiffBuilder = BlockDiff.from(diffForWrite)
                                 .targetStartLine(insertionResult.getStartLine() > 0 ? insertionResult.getStartLine() : referenceStartLine)
-                                .build();
+                                .targetLines(appliedSnippet)
+                                .targetContent(snippetContent);
+                        if (!CollectionUtils.isEmpty(appliedSnippet)) {
+                            int updatedChangedLines = Math.max(appliedSnippet.size(), diffForWrite.getChangedLineCount());
+                            appliedDiffBuilder.changedLineCount(updatedChangedLines);
+                        }
+                        BlockDiff appliedDiff = appliedDiffBuilder.build();
                         BlockDecisionSnapshot updated = blockDecisionMutationService.updateSnapshot(workingSnapshot, candidate.getBlockId(),
                                 new Function<BlockDecisionRecord, BlockDecisionRecord>() {
                                     @Override
                                     public BlockDecisionRecord apply(BlockDecisionRecord blockRecord) {
+                                        String annotationTemplate = candidate.getTemplate();
+                                        if (!StringUtils.hasText(annotationTemplate)
+                                                && blockRecord != null
+                                                && blockRecord.getMetadata() != null
+                                                && blockRecord.getMetadata().get("annotationTemplate") instanceof String) {
+                                            annotationTemplate = Objects.toString(blockRecord.getMetadata().get("annotationTemplate"), null);
+                                        }
                                         return blockDecisionMutationService.buildUpdatedRecord(
                                                 blockDecisionMutationService.withDiff(blockRecord, appliedDiff),
                                                 candidate.getAnnotatedCode(),
                                                 null,
                                                 null,
-                                                null,
-                                                null,
+                                                annotationTemplate,
+                                                candidate.getTemplateKey(),
                                                 STAGE_APPLIED);
                                     }
                                 });
@@ -369,7 +471,7 @@ public class CodeBlockMigrationService {
                         succeeded++;
                         logInsertionResult(candidate, insertionResult);
                     } catch (Exception inner) {
-                        log.warn("应用迁移代码失败 blockId={}", candidate.getBlockId(), inner);
+                        log.warn("搴旂敤杩佺Щ浠ｇ爜澶辫触 blockId={}", candidate.getBlockId(), inner);
                         failures.add(candidate.getBlockId() + ": " + inner.getMessage());
                     }
                 }
@@ -481,10 +583,10 @@ public class CodeBlockMigrationService {
         String filePath = candidate.getDetail() != null ? candidate.getDetail().getFilePath() : null;
         String templateKey = candidate.getTemplateKey();
         if (result.isSkipped()) {
-            log.info("跳过迁移写入 blockId={} file={} template={} startLine={} preview={}",
+            log.info("Skip migration write blockId={} file={} template={} startLine={} preview={}",
                     candidate.getBlockId(), filePath, templateKey, result.getStartLine(), result.preview());
         } else {
-            log.info("已将迁移代码写入目标文件 blockId={} file={} template={} startLine={} inserted={} replaced={} preview={}",
+            log.info("Migration write applied blockId={} file={} template={} startLine={} inserted={} replaced={} preview={}",
                     candidate.getBlockId(), filePath, templateKey, result.getStartLine(), result.getInsertedLines(),
                     result.getReplacedLines(), result.preview());
         }
@@ -521,6 +623,94 @@ public class CodeBlockMigrationService {
                     referenceStartLine);
         }
         return insertionResult;
+
+    }
+
+    private InsertionResult revertAnnotatedContent(String blockId,
+                                                   CodeBlockDetailDTO detail,
+                                                   BlockDecisionRecord currentRecord,
+                                                   BlockDecisionRecord revertedRecord,
+                                                   int referenceLineHint) throws IOException {
+        BlockDiff currentDiff = currentRecord == null ? null : currentRecord.getDiff();
+        BlockDiff revertDiff = revertedRecord == null ? null : revertedRecord.getDiff();
+        if (currentDiff == null) {
+            return InsertionResult.skipped(referenceLineHint > 0 ? referenceLineHint : 1, java.util.Collections.<String>emptyList());
+        }
+        int referenceStartLine = determineReferenceStartLine(currentDiff, detail);
+        if (referenceStartLine <= 0) {
+            referenceStartLine = referenceLineHint;
+        }
+        int overrideStartLine = referenceStartLine > 0 ? referenceStartLine : -1;
+        BlockDiff diffForWrite = BlockDiff.from(currentDiff)
+                .targetStartLine(overrideStartLine > 0 ? overrideStartLine : currentDiff.getTargetStartLine())
+                .build();
+        String restoredContent = revertDiff == null ? "" : revertDiff.getTargetContent();
+        String normalizedRestore = LineEndingNormalizer.normalize(restoredContent);
+        List<String> expectedAnnotated = LineEndingNormalizer.splitLines(
+                LineEndingNormalizer.normalize(currentDiff.getTargetContent()));
+        InsertionResult primary;
+        if (CollectionUtils.isEmpty(expectedAnnotated)) {
+            primary = annotatedFileWriter.writeAnnotatedToFile(detail, normalizedRestore, diffForWrite, overrideStartLine);
+        } else {
+            primary = annotatedFileWriter.writeAnnotatedWithReplacement(
+                    detail,
+                    normalizedRestore,
+                    diffForWrite,
+                    overrideStartLine,
+                    expectedAnnotated);
+        }
+        if (!primary.isSkipped()) {
+            return primary;
+        }
+        String templateKey = resolveTemplateKey(currentRecord);
+        InsertionResult markerResult = annotatedFileWriter.removeAnnotatedSegment(
+                detail,
+                blockId,
+                templateKey,
+                normalizedRestore,
+                overrideStartLine > 0 ? overrideStartLine : referenceLineHint);
+        if (!markerResult.isSkipped()) {
+            return markerResult;
+        }
+        return primary;
+    }
+
+    private void logRevertResult(UndoCandidate candidate, InsertionResult result) {
+        if (candidate == null || result == null) {
+            return;
+        }
+        String filePath = candidate.getDetail() != null ? candidate.getDetail().getFilePath() : null;
+        if (result.isSkipped()) {
+            log.info("Skipped undo write blockId={} file={} startLine={} preview={}",
+                    candidate.getBlockId(), filePath, result.getStartLine(), result.preview());
+        } else {
+            log.info("Undo write applied blockId={} file={} startLine={} inserted={} replaced={}",
+                    candidate.getBlockId(), filePath, result.getStartLine(), result.getInsertedLines(), result.getReplacedLines());
+        }
+    }
+
+    private List<UndoFileGroup> groupUndoCandidates(List<UndoCandidate> candidates) {
+        Map<String, UndoFileGroup> groups = new LinkedHashMap<String, UndoFileGroup>();
+        if (CollectionUtils.isEmpty(candidates)) {
+            return new ArrayList<UndoFileGroup>();
+        }
+        for (UndoCandidate candidate : candidates) {
+            if (candidate == null) {
+                continue;
+            }
+            CodeBlockDetailDTO detail = candidate.getDetail();
+            if (detail == null || !StringUtils.hasText(detail.getTargetProjectCode()) || !StringUtils.hasText(detail.getFilePath())) {
+                continue;
+            }
+            String key = detail.getTargetProjectCode() + "::" + detail.getFilePath();
+            UndoFileGroup group = groups.get(key);
+            if (group == null) {
+                group = new UndoFileGroup(detail.getTargetProjectCode(), detail.getFilePath());
+                groups.put(key, group);
+            }
+            group.addCandidate(candidate);
+        }
+        return new ArrayList<UndoFileGroup>(groups.values());
     }
 
     private boolean hasNonBlankLine(List<String> lines) {
@@ -539,11 +729,13 @@ public class CodeBlockMigrationService {
         if (candidate == null) {
             return Integer.MAX_VALUE;
         }
-        BlockDiff diff = candidate.getDiff();
+        return resolveReferenceLine(candidate.getDiff(), candidate.getDetail());
+    }
+
+    private int resolveReferenceLine(BlockDiff diff, CodeBlockDetailDTO detail) {
         if (diff != null && diff.getTargetStartLine() > 0) {
             return diff.getTargetStartLine();
         }
-        CodeBlockDetailDTO detail = candidate.getDetail();
         if (detail != null && detail.getStartLine() > 0) {
             return detail.getStartLine();
         }
@@ -551,6 +743,102 @@ public class CodeBlockMigrationService {
             return detail.getEndLine();
         }
         return Integer.MAX_VALUE;
+    }
+
+    private String resolveTemplateKey(BlockDecisionRecord record) {
+        if (record == null) {
+            return null;
+        }
+        Map<String, Object> metadata = record.getMetadata();
+        if (metadata != null && metadata.containsKey(METADATA_TEMPLATE_KEY)) {
+            String templateKey = Objects.toString(metadata.get(METADATA_TEMPLATE_KEY), null);
+            if (StringUtils.hasText(templateKey)) {
+                return templateKey.trim();
+            }
+        }
+        BlockDiff diff = record.getDiff();
+        if (diff != null && StringUtils.hasText(diff.getTargetContent())) {
+            String targetContent = diff.getTargetContent();
+            if (targetContent.contains("迁移适配段结束")) {
+                return "migrate_adapt";
+            }
+            if (targetContent.contains("迁移生成的代码片段结束")) {
+                return "default";
+            }
+        }
+        return null;
+    }
+
+    private static final class UndoCandidate {
+        private final String blockId;
+        private final CodeBlockDetailDTO detail;
+        private final BlockDecisionSnapshot snapshot;
+        private final int referenceLine;
+
+        private UndoCandidate(String blockId,
+                              CodeBlockDetailDTO detail,
+                              BlockDecisionSnapshot snapshot,
+                              int referenceLine) {
+            this.blockId = blockId;
+            this.detail = detail;
+            this.snapshot = snapshot;
+            this.referenceLine = referenceLine > 0 ? referenceLine : Integer.MIN_VALUE;
+        }
+
+        private String getBlockId() {
+            return blockId;
+        }
+
+        private CodeBlockDetailDTO getDetail() {
+            return detail;
+        }
+
+        private BlockDecisionSnapshot getSnapshot() {
+            return snapshot;
+        }
+
+        private int getReferenceLine() {
+            return referenceLine;
+        }
+    }
+
+    private static final class UndoFileGroup {
+        private final String targetProjectCode;
+        private final String filePath;
+        private final List<UndoCandidate> candidates;
+        private UndoCandidate primaryCandidate;
+
+        private UndoFileGroup(String targetProjectCode, String filePath) {
+            this.targetProjectCode = targetProjectCode;
+            this.filePath = filePath;
+            this.candidates = new ArrayList<UndoCandidate>();
+        }
+
+        private void addCandidate(UndoCandidate candidate) {
+            if (candidate == null) {
+                return;
+            }
+            if (primaryCandidate == null) {
+                primaryCandidate = candidate;
+            }
+            candidates.add(candidate);
+        }
+
+        private UndoCandidate getPrimaryCandidate() {
+            return primaryCandidate;
+        }
+
+        private List<UndoCandidate> getCandidates() {
+            return candidates;
+        }
+
+        private String getTargetProjectCode() {
+            return targetProjectCode;
+        }
+
+        private String getFilePath() {
+            return filePath;
+        }
     }
 
     public static final class AnnotationMetadata {

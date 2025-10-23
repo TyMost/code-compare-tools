@@ -1,6 +1,6 @@
 annotation:
   default: |
-    /** 迁移生成的代码片段开始*/
+    /** 迁移生成的代码片段开始（blockId=${blockId}）*/
     ${code}
     /** 迁移生成的代码片段结束 */
   migrate_adapt: |

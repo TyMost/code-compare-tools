@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
+import org.springframework.util.StringUtils;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -63,6 +64,59 @@ public class AnnotatedFileWriter {
                                                          int overrideStartLine,
                                                          List<String> expectedOriginal) throws IOException {
         return writeAnnotated(detail, annotatedCode, diff, overrideStartLine, WriteMode.REPLACE, expectedOriginal);
+    }
+
+    public InsertionResult removeAnnotatedSegment(CodeBlockDetailDTO detail,
+                                                  String blockId,
+                                                  String templateKey,
+                                                  String replacementContent,
+                                                  int referenceStartLineHint) throws IOException {
+        int referenceLine = referenceStartLineHint > 0 ? referenceStartLineHint : 1;
+        if (detail == null || !StringUtils.hasText(detail.getTargetProjectCode()) || !StringUtils.hasText(detail.getFilePath())) {
+            return InsertionResult.skipped(referenceLine, Collections.<String>emptyList());
+        }
+        Marker marker = resolveMarkers(templateKey, blockId);
+        if (marker == null) {
+            return InsertionResult.skipped(referenceLine, Collections.<String>emptyList());
+        }
+        Path targetFile = projectFileResolver.resolveTargetFile(detail.getTargetProjectCode(), detail.getFilePath());
+        if (!Files.exists(targetFile)) {
+            return InsertionResult.skipped(referenceLine, Collections.<String>emptyList());
+        }
+        List<String> existingLines = Files.readAllLines(targetFile, StandardCharsets.UTF_8);
+        if (CollectionUtils.isEmpty(existingLines)) {
+            return InsertionResult.skipped(referenceLine, Collections.<String>emptyList());
+        }
+        int preferredIndex = clamp(referenceLine - 1, 0, Math.max(existingLines.size() - 1, 0));
+        int startIndex = findMarkerIndex(existingLines, marker.getStart(), preferredIndex);
+        if (startIndex < 0) {
+            startIndex = findMarkerIndex(existingLines, marker.getStart(), 0);
+        }
+        if (startIndex < 0) {
+            return InsertionResult.skipped(referenceLine, Collections.<String>emptyList());
+        }
+        int endIndex = findMarkerIndex(existingLines, marker.getEnd(), startIndex);
+        if (endIndex < startIndex) {
+            return InsertionResult.skipped(referenceLine, Collections.<String>emptyList());
+        }
+        int removeCount = endIndex - startIndex + 1;
+        for (int i = 0; i < removeCount && startIndex < existingLines.size(); i++) {
+            existingLines.remove(startIndex);
+        }
+        String normalizedReplacement = LineEndingNormalizer.normalize(replacementContent);
+        List<String> replacementLines = LineEndingNormalizer.splitLines(normalizedReplacement);
+        if (!CollectionUtils.isEmpty(replacementLines)) {
+            existingLines.addAll(startIndex, replacementLines);
+        }
+        Files.createDirectories(targetFile.getParent());
+        String updatedContent = LineEndingNormalizer.joinLines(existingLines);
+        Files.write(targetFile,
+                updatedContent.getBytes(StandardCharsets.UTF_8),
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.WRITE);
+        int insertedLines = CollectionUtils.isEmpty(replacementLines) ? 0 : replacementLines.size();
+        return InsertionResult.applied(startIndex + 1, insertedLines, removeCount, replacementLines);
     }
 
     private int determineTargetLine(CodeBlockDetailDTO detail, BlockDiff diff, int overrideStartLine) {
@@ -196,6 +250,36 @@ public class AnnotatedFileWriter {
         return -1;
     }
 
+    private Marker resolveMarkers(String templateKey, String blockId) {
+        if (!StringUtils.hasText(templateKey)) {
+            return null;
+        }
+        String trimmedKey = templateKey.trim();
+        if ("migrate_adapt".equalsIgnoreCase(trimmedKey)) {
+            return new Marker("/** 迁移适配段*/", "/** 迁移适配段结束 */");
+        }
+        if ("default".equalsIgnoreCase(trimmedKey)) {
+            String safeBlockId = blockId == null ? "" : blockId;
+            return new Marker(
+                    String.format("/** 迁移生成的代码片段开始（blockId=%s）*/", safeBlockId),
+                    "/** 迁移生成的代码片段结束 */");
+        }
+        return null;
+    }
+
+    private int findMarkerIndex(List<String> existingLines, String marker, int startIndex) {
+        if (!StringUtils.hasText(marker) || CollectionUtils.isEmpty(existingLines)) {
+            return -1;
+        }
+        int begin = Math.max(0, startIndex);
+        for (int i = begin; i < existingLines.size(); i++) {
+            if (linesEqual(existingLines.get(i), marker)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private boolean linesEqual(String left, String right) {
         return normalizeForComparison(left).equals(normalizeForComparison(right));
     }
@@ -241,6 +325,24 @@ public class AnnotatedFileWriter {
 
     }
 
+    private static final class Marker {
+        private final String start;
+        private final String end;
+
+        private Marker(String start, String end) {
+            this.start = start;
+            this.end = end;
+        }
+
+        private String getStart() {
+            return start;
+        }
+
+        private String getEnd() {
+            return end;
+        }
+    }
+
     public static final class InsertionResult {
         private final boolean skipped;
         private final int startLine;
@@ -282,6 +384,10 @@ public class AnnotatedFileWriter {
 
         public int getReplacedLines() {
             return replacedLines;
+        }
+
+        public List<String> getSnippet() {
+            return snippet;
         }
 
         public String preview() {

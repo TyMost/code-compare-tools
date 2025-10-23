@@ -21,6 +21,7 @@ public final class MigrationCandidate {
     private final String annotatedCode;
     private final BlockDiff diff;
     private final List<String> expectedOriginal;
+    private final String template;
     private final String templateKey;
 
     public MigrationCandidate(String blockId,
@@ -30,6 +31,7 @@ public final class MigrationCandidate {
                               String annotatedCode,
                               BlockDiff diff,
                               List<String> expectedOriginal,
+                              String template,
                               String templateKey) {
         this.blockId = blockId;
         this.detail = detail;
@@ -42,6 +44,7 @@ public final class MigrationCandidate {
         } else {
             this.expectedOriginal = Collections.unmodifiableList(new ArrayList<String>(expectedOriginal));
         }
+        this.template = template;
         this.templateKey = templateKey == null ? "migrate_adapt" : templateKey;
     }
 
@@ -71,6 +74,10 @@ public final class MigrationCandidate {
 
     public List<String> getExpectedOriginal() {
         return expectedOriginal;
+    }
+
+    public String getTemplate() {
+        return template;
     }
 
     public String getTemplateKey() {
