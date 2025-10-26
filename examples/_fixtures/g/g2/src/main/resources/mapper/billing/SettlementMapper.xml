@@ -1,0 +1,14 @@
+﻿<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.migration.billing.SettlementMapper">
+    <update id="splitSettlementWindow">
+        UPDATE gauss_billing_window
+        SET window_flag = #{flag}, shard_hint = #{shardHint}
+        WHERE window_id = #{windowId}
+    </update>
+
+    <insert id="insertSettlementEvent">
+        INSERT INTO gauss_billing_audit(window_id, operator)
+        VALUES(#{windowId}, #{operator})
+    </insert>
+</mapper>

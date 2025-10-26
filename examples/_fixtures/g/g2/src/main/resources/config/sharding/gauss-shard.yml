@@ -1,0 +1,7 @@
+﻿shards:
+  total: 8
+  rules:
+    - range: [0, 3]
+      node: gauss-shard-a
+    - range: [4, 7]
+      node: gauss-shard-b

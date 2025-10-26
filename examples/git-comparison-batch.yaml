@@ -1,34 +1,26 @@
-# Sample batch configuration targeting the demo repositories beneath `examples/`.
-# These pairs exercise the git-comparison Excel export, including similarity and
-# the new coverage metrics emitted by the backend.
-
+﻿# Batch configuration for Oracle→Gauss demo repositories inside `examples/`.
 agent:
   enable-replacement-mode: true
 
 pairs:
-  # Primary scenario: feature branch from projectA-git compared against the
-  # hardened release branch from projectB-git. This mirrors the configuration
-  # in backend/application.yml so UI and batch exports stay aligned.
   - source:
-      code: projectA-git
-      path: D:\Coding\code-compare-tools\examples\projectA-git
+      code: o-g
+      path: D:\Coding\code-compare-tools\examples\o
     target:
-      code: projectB-git
-      path: D:\Coding\code-compare-tools\examples\projectB-git
-    git-base-ref-source: refs/heads/main
-    git-target-ref-source: refs/heads/feature/git-demo
-    git-base-ref-target: refs/heads/main
-    git-target-ref-target: refs/heads/release/git-demo
+      code: g
+      path: D:\Coding\code-compare-tools\examples\g
+    git-base-ref-source: refs/heads/o1
+    git-target-ref-source: refs/heads/o2
+    git-base-ref-target: refs/heads/g1
+    git-target-ref-target: refs/heads/g2
 
-  # Optional reverse comparison to highlight coverage asymmetry when the
-  # production branch acts as the source of truth.
   - source:
-      code: projectB-git
-      path: D:\Coding\code-compare-tools\examples\projectB-git
+      code: o-g-extra
+      path: D:\Coding\code-compare-tools\examples\o
     target:
-      code: projectA-git
-      path: D:\Coding\code-compare-tools\examples\projectA-git
-    git-base-ref-source: refs/heads/main
-    git-target-ref-source: refs/heads/release/git-demo
+      code: g-extra
+      path: D:\Coding\code-compare-tools\examples\g-extra
+    git-base-ref-source: refs/heads/o1
+    git-target-ref-source: refs/heads/o2
     git-base-ref-target: refs/heads/main
-    git-target-ref-target: refs/heads/feature/git-demo
+    git-target-ref-target: refs/heads/gauss-rd
