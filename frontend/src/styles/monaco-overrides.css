@@ -1,0 +1,18 @@
+﻿.monaco-editor,
+.monaco-editor * {
+  font-family: "Fira Code", "Courier New", Consolas, monospace !important;
+  font-size: 13px !important;
+}
+
+.monaco-editor .margin,
+.monaco-editor .monaco-editor-background,
+.monaco-diff-editor .editor.modified .monaco-editor-background,
+.monaco-diff-editor .editor.original .monaco-editor-background {
+  background-color: #fafafa;
+}
+
+.monaco-editor .line-numbers,
+.monaco-diff-editor .margin .line-numbers {
+  color: #999 !important;
+  font-size: 12px !important;
+}

@@ -1,0 +1,120 @@
+package com.example.migratediff.application.scan;
+
+import com.example.migratediff.domain.coverage.CoverageDetail;
+import com.example.migratediff.domain.coverage.CoverageSummary;
+import com.example.migratediff.domain.diff.DiffFile;
+import com.example.migratediff.domain.diff.DiffSummary;
+import lombok.Getter;
+import org.springframework.util.CollectionUtils;
+import org.springframework.util.StringUtils;
+
+import java.time.Instant;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+@Getter
+public class ScanReport {
+
+    private final String taskId;
+    private final ScanMode mode;
+    private final DiffSummary oracleSummary;
+    private final DiffSummary gaussSummary;
+    private final CoverageSummary coverageSummary;
+    private final Instant generatedAt;
+    private final Map<String, DiffFile> oracleIndex;
+    private final Map<String, DiffFile> gaussIndex;
+    private final Map<String, CoverageDetail> coverageIndex;
+
+    public ScanReport(String taskId,
+                      ScanMode mode,
+                      DiffSummary oracleSummary,
+                      DiffSummary gaussSummary,
+                      CoverageSummary coverageSummary) {
+        this.taskId = StringUtils.hasText(taskId) ? taskId : UUIDGenerator.randomTaskId();
+        this.mode = mode;
+        this.oracleSummary = oracleSummary;
+        this.gaussSummary = gaussSummary;
+        this.coverageSummary = coverageSummary;
+        this.generatedAt = Instant.now();
+        this.oracleIndex = indexByPath(oracleSummary);
+        this.gaussIndex = indexByPath(gaussSummary);
+        this.coverageIndex = indexCoverage(coverageSummary);
+    }
+
+    public Set<String> filePaths() {
+        return Stream.of(oracleIndex.keySet(), gaussIndex.keySet())
+                .flatMap(Collection::stream)
+                .collect(Collectors.toCollection(java.util.LinkedHashSet::new));
+    }
+
+    public Optional<DiffFile> findOracle(String filePath) {
+        return Optional.ofNullable(oracleIndex.get(filePath));
+    }
+
+    public Optional<DiffFile> findGauss(String filePath) {
+        return Optional.ofNullable(gaussIndex.get(filePath));
+    }
+
+    public Optional<CoverageDetail> findCoverage(String filePath) {
+        return Optional.ofNullable(coverageIndex.get(filePath));
+    }
+
+    public DiffSummary overviewForOracleFile(String filePath) {
+        return cloneSummaryWithSingleFile(oracleSummary, oracleIndex.get(filePath));
+    }
+
+    public DiffSummary overviewForGaussFile(String filePath) {
+        return cloneSummaryWithSingleFile(gaussSummary, gaussIndex.get(filePath));
+    }
+
+    private Map<String, DiffFile> indexByPath(DiffSummary summary) {
+        if (summary == null || CollectionUtils.isEmpty(summary.getDiffFiles())) {
+            return Collections.emptyMap();
+        }
+        return summary.getDiffFiles().stream()
+                .filter(file -> file != null && StringUtils.hasText(file.getRelativePath()))
+                .collect(Collectors.toMap(DiffFile::getRelativePath, file -> file, (left, right) -> right, LinkedHashMap::new));
+    }
+
+    private Map<String, CoverageDetail> indexCoverage(CoverageSummary summary) {
+        if (summary == null || CollectionUtils.isEmpty(summary.getDetails())) {
+            return Collections.emptyMap();
+        }
+        return summary.getDetails().stream()
+                .filter(detail -> detail != null && StringUtils.hasText(detail.getFilePath()))
+                .collect(Collectors.toMap(CoverageDetail::getFilePath, detail -> detail, (left, right) -> right, LinkedHashMap::new));
+    }
+
+    private DiffSummary cloneSummaryWithSingleFile(DiffSummary original, DiffFile file) {
+        if (original == null || file == null) {
+            return null;
+        }
+        DiffSummary clone = DiffSummary.builder()
+                .repoConfig(original.getRepoConfig())
+                .repoPath(original.getRepoPath())
+                .branchFrom(original.getBranchFrom())
+                .branchTo(original.getBranchTo())
+                .baseCommitId(original.getBaseCommitId())
+                .targetCommitId(original.getTargetCommitId())
+                .deltaType(original.getDeltaType())
+                .scanTime(original.getScanTime())
+                .diffFiles(Collections.singletonList(file))
+                .build();
+        return clone;
+    }
+
+    private static class UUIDGenerator {
+        private UUIDGenerator() {
+        }
+
+        private static String randomTaskId() {
+            return java.util.UUID.randomUUID().toString();
+        }
+    }
+}

@@ -1,0 +1,27 @@
+# Batch configuration for Oracle��Gauss demo repositories inside `examples/`.
+# 若需演示「时间区间」扫描示例，请配合同级的 `time-range-guide.md` 与 `time-range-scan-request.json`。
+agent:
+  enable-replacement-mode: true
+
+pairs:
+  - source:
+      code: o-g
+      path: D:\Coding\code-compare-tools\examples\o
+    target:
+      code: g
+      path: D:\Coding\code-compare-tools\examples\g
+    git-base-ref-source: refs/heads/o1
+    git-target-ref-source: refs/heads/o2
+    git-base-ref-target: refs/heads/g1
+    git-target-ref-target: refs/heads/g2
+
+  - source:
+      code: o-g-extra
+      path: D:\Coding\code-compare-tools\examples\o
+    target:
+      code: g-extra
+      path: D:\Coding\code-compare-tools\examples\g-extra
+    git-base-ref-source: refs/heads/o1
+    git-target-ref-source: refs/heads/o2
+    git-base-ref-target: refs/heads/main
+    git-target-ref-target: refs/heads/gauss-rd

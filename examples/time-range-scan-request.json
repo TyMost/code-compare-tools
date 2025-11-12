@@ -1,0 +1,17 @@
+{
+  "taskId": "demo-time-range-20251112",
+  "persistResult": true,
+  "presetName": "default-og",
+  "oracle": {
+    "repoPath": "D:/Coding/code-compare-tools/examples/o",
+    "timeFrom": "2025-11-01T00:00:00+08:00",
+    "timeTo": "2025-11-05T12:00:00+08:00",
+    "refHint": "refs/heads/o2"
+  },
+  "gauss": {
+    "repoPath": "D:/Coding/code-compare-tools/examples/g",
+    "timeFrom": "2025-11-02T00:00:00+08:00",
+    "timeTo": "2025-11-05T12:00:00+08:00",
+    "refHint": "refs/heads/g2"
+  }
+}

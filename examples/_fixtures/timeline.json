@@ -1,0 +1,8 @@
+[
+  { "repo": "o", "branch": "o1", "timestamp": "2025-11-01T01:00:00+08:00" },
+  { "repo": "o", "branch": "o2", "timestamp": "2025-11-04T10:00:00+08:00" },
+  { "repo": "g", "branch": "g1", "timestamp": "2025-11-02T03:00:00+08:00" },
+  { "repo": "g", "branch": "g2", "timestamp": "2025-11-05T09:30:00+08:00" },
+  { "repo": "g-extra", "branch": "main", "timestamp": "2025-11-01T12:00:00+08:00" },
+  { "repo": "g-extra", "branch": "gauss-rd", "timestamp": "2025-11-03T20:00:00+08:00" }
+]
