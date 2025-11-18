@@ -194,6 +194,30 @@ class MigrationAppServiceTest {
         assertFalse(Files.exists(target.resolveSibling("Main.java.migrationBak")));
     }
 
+    @Test
+    void apply_shouldCreateFileUnderGaussRootWhenGaussDiffMissing() throws Exception {
+        DeltaGroup oracleOnlyGroup = buildOracleOnlyGroup();
+        when(diffAppService.mergeDelta(org.mockito.ArgumentMatchers.<DiffSummary>nullable(DiffSummary.class),
+                org.mockito.ArgumentMatchers.<DiffSummary>nullable(DiffSummary.class))).thenReturn(oracleOnlyGroup);
+
+        Path oracleRoot = tempDir.resolve("oracle-root");
+        Path gaussRoot = tempDir.resolve("gauss-root");
+        Files.createDirectories(oracleRoot);
+        Files.createDirectories(gaussRoot);
+
+        MigrationSummary summary = new MigrationSummary();
+        summary.setDeltaOSummary(buildDiffSummary(oracleRoot));
+        summary.setDeltaGSummary(buildDiffSummary(gaussRoot));
+
+        migrationAppService.preview(summary);
+        migrationAppService.apply(summary);
+        MigrationResult result = summary.getResult();
+
+        Path gaussFile = gaussRoot.resolve("src/Main.java");
+        assertTrue(Files.exists(gaussFile), "Gauss 仓库缺文件时应自动创建并写入模板");
+        assertTrue(result.isSuccess());
+    }
+
     private MigrationSummary buildSummary() {
         MigrationSummary summary = new MigrationSummary();
         RepoConfig repoConfig = RepoConfig.builder()
@@ -208,6 +232,17 @@ class MigrationAppServiceTest {
         summary.setDeltaOSummary(deltaSummary);
         summary.setTask(new MigrationTask());
         return summary;
+    }
+
+    private DiffSummary buildDiffSummary(Path root) {
+        RepoConfig repoConfig = RepoConfig.builder()
+                .repoPath(RepoPath.builder()
+                        .absolutePath(root.toString())
+                        .build())
+                .build();
+        return DiffSummary.builder()
+                .repoConfig(repoConfig)
+                .build();
     }
 
     private DeltaGroup buildDeltaGroup() {
@@ -263,6 +298,25 @@ class MigrationAppServiceTest {
                 .endLineTo(endLine)
                 .build();
         return buildGroupWithBlocks(oracleBlock, gaussBlock);
+    }
+
+    private DeltaGroup buildOracleOnlyGroup() {
+        DiffBlock oracleBlock = DiffBlock.builder()
+                .contentFrom("")
+                .contentTo("System.out.println(\"source\");")
+                .startLineFrom(1)
+                .endLineFrom(1)
+                .startLineTo(1)
+                .endLineTo(1)
+                .build();
+        DiffFile deltaO = DiffFile.builder()
+                .relativePath("src/Main.java")
+                .blocks(Collections.singletonList(oracleBlock))
+                .build();
+        return DeltaGroup.builder()
+                .deltaO(deltaO)
+                .deltaG(null)
+                .build();
     }
 
     private int countOccurrences(String text, String marker) {

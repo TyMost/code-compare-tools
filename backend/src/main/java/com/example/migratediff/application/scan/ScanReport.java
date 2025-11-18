@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -91,10 +92,16 @@ public class ScanReport {
                 .collect(Collectors.toMap(CoverageDetail::getFilePath, detail -> detail, (left, right) -> right, LinkedHashMap::new));
     }
 
+    /**
+     * 复制单个文件的 Diff 概览；即便指定文件在目标侧缺失，也要保留仓库配置用于后续落盘。
+     */
     private DiffSummary cloneSummaryWithSingleFile(DiffSummary original, DiffFile file) {
-        if (original == null || file == null) {
+        if (original == null) {
             return null;
         }
+        List<DiffFile> files = file == null
+                ? Collections.emptyList()
+                : Collections.singletonList(file);
         DiffSummary clone = DiffSummary.builder()
                 .repoConfig(original.getRepoConfig())
                 .repoPath(original.getRepoPath())
@@ -104,7 +111,7 @@ public class ScanReport {
                 .targetCommitId(original.getTargetCommitId())
                 .deltaType(original.getDeltaType())
                 .scanTime(original.getScanTime())
-                .diffFiles(Collections.singletonList(file))
+                .diffFiles(files)
                 .build();
         return clone;
     }

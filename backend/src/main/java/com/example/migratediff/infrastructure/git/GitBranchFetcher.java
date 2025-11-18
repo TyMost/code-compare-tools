@@ -175,12 +175,30 @@ public class GitBranchFetcher {
         return objectId;
     }
 
-    private void fetchRemote(Git git, String remoteName) throws GitAPIException {
+    private void fetchRemote(Git git, String remoteName) {
         String finalRemote = remoteName != null && !remoteName.trim().isEmpty() ? remoteName : "origin";
-        git.fetch()
-                .setRemote(finalRemote)
-                .setCheckFetchedObjects(true)
-                .call();
+        if (!hasRemoteConfigured(git, finalRemote)) {
+            LOGGER.debug("仓库未配置远端 {}，跳过 fetch", finalRemote);
+            return;
+        }
+        try {
+            git.fetch()
+                    .setRemote(finalRemote)
+                    .setCheckFetchedObjects(true)
+                    .call();
+        } catch (GitAPIException ex) {
+            LOGGER.warn("远端 {} fetch 失败，继续使用本地引用: {}", finalRemote, ex.getMessage());
+        }
+    }
+
+    private boolean hasRemoteConfigured(Git git, String remoteName) {
+        if (git == null || remoteName == null) {
+            return false;
+        }
+        return git.getRepository()
+                .getConfig()
+                .getSubsections("remote")
+                .contains(remoteName);
     }
 
     /**
