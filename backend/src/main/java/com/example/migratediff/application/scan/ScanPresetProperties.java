@@ -48,5 +48,9 @@ public class ScanPresetProperties {
         private boolean includeWorkingTree;
         private boolean fetchIfMissing = true;
         private String remoteName = "origin";
+        private String scanStrategy;
+        private boolean snapshotIncludeRemoteRefs;
+        private boolean snapshotIncludeTags;
+        private Integer snapshotMaxRefs;
     }
 }

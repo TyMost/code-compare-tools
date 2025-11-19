@@ -24,4 +24,12 @@ public class RepoConfig {
     private String remoteName = "origin";
     @Builder.Default
     private CommitLocatorMode locatorMode = CommitLocatorMode.BRANCH;
+    @Builder.Default
+    private ScanStrategy scanStrategy = ScanStrategy.BRANCH;
+    @Builder.Default
+    private boolean snapshotIncludeRemoteRefs = false;
+    @Builder.Default
+    private boolean snapshotIncludeTags = false;
+    @Builder.Default
+    private int snapshotMaxRefs = 256;
 }

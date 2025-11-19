@@ -48,7 +48,7 @@ class ScanMapperTest {
         preset.setTarget(target);
 
         properties.setPresets(Collections.singletonList(preset));
-        mapper = new ScanMapper(new DiffMapper(), properties);
+        mapper = new ScanMapper(new DiffMapper("BRANCH"), properties);
     }
 
     @Test

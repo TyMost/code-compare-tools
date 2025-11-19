@@ -8,6 +8,8 @@ import com.example.migratediff.domain.repo.CommitLocatorMode;
 import com.example.migratediff.domain.repo.RepoBranch;
 import com.example.migratediff.domain.repo.RepoConfig;
 import com.example.migratediff.domain.repo.RepoPath;
+import com.example.migratediff.domain.repo.ScanStrategy;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -19,6 +21,12 @@ import java.time.format.DateTimeParseException;
 
 @Component
 public class DiffMapper {
+
+    private final ScanStrategy defaultScanStrategy;
+
+    public DiffMapper(@Value("${migratediff.scan.default-strategy:BRANCH}") String defaultScanStrategy) {
+        this.defaultScanStrategy = parseStrategy(defaultScanStrategy);
+    }
 
     public DiffSummary toDomain(DiffRequestDTO requestDTO) {
         return toDomain(requestDTO, null);
@@ -47,7 +55,8 @@ public class DiffMapper {
                         .refHint(resolveRefHint(requestDTO, true))
                         .build())
                 .deltaType(resolveDeltaType(requestDTO.getDeltaType(), defaultDeltaType))
-                .locatorMode(resolveLocatorMode(requestDTO));
+                .locatorMode(resolveLocatorMode(requestDTO))
+                .scanStrategy(resolveScanStrategy(requestDTO));
         if (requestDTO.getIncludeWorkingTree() != null) {
             builder.includeWorkingTree(requestDTO.getIncludeWorkingTree());
         }
@@ -56,6 +65,15 @@ public class DiffMapper {
         }
         if (StringUtils.hasText(requestDTO.getRemoteName())) {
             builder.remoteName(requestDTO.getRemoteName());
+        }
+        if (requestDTO.getSnapshotIncludeRemoteRefs() != null) {
+            builder.snapshotIncludeRemoteRefs(requestDTO.getSnapshotIncludeRemoteRefs());
+        }
+        if (requestDTO.getSnapshotIncludeTags() != null) {
+            builder.snapshotIncludeTags(requestDTO.getSnapshotIncludeTags());
+        }
+        if (requestDTO.getSnapshotMaxRefs() != null) {
+            builder.snapshotMaxRefs(requestDTO.getSnapshotMaxRefs());
         }
         RepoConfig config = builder.build();
         return DiffSummary.builder()
@@ -93,6 +111,17 @@ public class DiffMapper {
         return CommitLocatorMode.BRANCH;
     }
 
+    private ScanStrategy resolveScanStrategy(DiffRequestDTO requestDTO) {
+        if (requestDTO == null || !StringUtils.hasText(requestDTO.getScanStrategy())) {
+            return defaultScanStrategy;
+        }
+        try {
+            return ScanStrategy.valueOf(requestDTO.getScanStrategy().trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            return defaultScanStrategy;
+        }
+    }
+
     private Instant parseInstant(String value) {
         if (!StringUtils.hasText(value)) {
             return null;
@@ -124,5 +153,16 @@ public class DiffMapper {
             return requestDTO.getBranchFrom();
         }
         return "HEAD";
+    }
+
+    private ScanStrategy parseStrategy(String value) {
+        if (!StringUtils.hasText(value)) {
+            return ScanStrategy.BRANCH;
+        }
+        try {
+            return ScanStrategy.valueOf(value.trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            return ScanStrategy.BRANCH;
+        }
     }
 }

@@ -129,6 +129,10 @@ public class ScanMapper {
         repoDTO.setIncludeWorkingTree(preset.isIncludeWorkingTree());
         repoDTO.setFetchIfMissing(preset.isFetchIfMissing());
         repoDTO.setRemoteName(preset.getRemoteName());
+        repoDTO.setScanStrategy(preset.getScanStrategy());
+        repoDTO.setSnapshotIncludeRemoteRefs(preset.isSnapshotIncludeRemoteRefs());
+        repoDTO.setSnapshotIncludeTags(preset.isSnapshotIncludeTags());
+        repoDTO.setSnapshotMaxRefs(preset.getSnapshotMaxRefs());
         return repoDTO;
     }
 
@@ -153,6 +157,9 @@ public class ScanMapper {
             result.setIncludeWorkingTree(preset.isIncludeWorkingTree());
             result.setFetchIfMissing(preset.isFetchIfMissing());
             result.setRemoteName(preset.getRemoteName());
+            result.setSnapshotIncludeRemoteRefs(preset.isSnapshotIncludeRemoteRefs());
+            result.setSnapshotIncludeTags(preset.isSnapshotIncludeTags());
+            result.setSnapshotMaxRefs(preset.getSnapshotMaxRefs());
         }
         if (override != null) {
             if (StringUtils.hasText(override.getRepoPath())) {
@@ -185,6 +192,18 @@ public class ScanMapper {
             if (StringUtils.hasText(override.getRemoteName())) {
                 result.setRemoteName(override.getRemoteName());
             }
+            if (StringUtils.hasText(override.getScanStrategy())) {
+                result.setScanStrategy(override.getScanStrategy());
+            }
+            if (override.getSnapshotIncludeRemoteRefs() != null) {
+                result.setSnapshotIncludeRemoteRefs(override.getSnapshotIncludeRemoteRefs());
+            }
+            if (override.getSnapshotIncludeTags() != null) {
+                result.setSnapshotIncludeTags(override.getSnapshotIncludeTags());
+            }
+            if (override.getSnapshotMaxRefs() != null) {
+                result.setSnapshotMaxRefs(override.getSnapshotMaxRefs());
+            }
         }
         if (!StringUtils.hasText(result.getRemoteName())) {
             result.setRemoteName("origin");
@@ -216,8 +235,12 @@ public class ScanMapper {
         }
         boolean hasBranches = StringUtils.hasText(request.getBranchFrom()) && StringUtils.hasText(request.getBranchTo());
         boolean hasTimeRange = StringUtils.hasText(request.getTimeFrom()) || StringUtils.hasText(request.getTimeTo());
+        boolean snapshotStrategy = "SNAPSHOT".equalsIgnoreCase(request.getScanStrategy());
         if (!hasBranches && !hasTimeRange) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, label + " repository configuration must provide branchFrom & branchTo or timeFrom/timeTo");
+        }
+        if (snapshotStrategy && !hasTimeRange) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, label + " snapshot strategy requires timeFrom/timeTo to be set");
         }
     }
 

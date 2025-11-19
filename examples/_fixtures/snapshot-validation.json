@@ -1,0 +1,40 @@
+[
+  {
+    "window": {
+      "start": "2025-11-01T00:00:00+08:00",
+      "end": "2025-11-02T12:00:00+08:00"
+    },
+    "expected": {
+      "earliest": {
+        "repo": "o",
+        "branch": "o1",
+        "marker": "add-oracle-baseline"
+      },
+      "latest": {
+        "repo": "g",
+        "branch": "g1",
+        "marker": "gauss-config-upsert"
+      }
+    },
+    "notes": "Covers initial oracle bootstrap and first gauss config update, ensuring branches across different repos are considered."
+  },
+  {
+    "window": {
+      "start": "2025-11-03T00:00:00+08:00",
+      "end": "2025-11-05T23:00:00+08:00"
+    },
+    "expected": {
+      "earliest": {
+        "repo": "g-extra",
+        "branch": "gauss-rd",
+        "marker": "enable-sql-audit"
+      },
+      "latest": {
+        "repo": "g",
+        "branch": "g2",
+        "marker": "api-batch-sync"
+      }
+    },
+    "notes": "Uses later commits to ensure remote-only branches like g-extra/gauss-rd participate in the scan."
+  }
+]

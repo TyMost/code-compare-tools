@@ -22,5 +22,9 @@ public class ScanPresetDTO {
         private boolean includeWorkingTree;
         private boolean fetchIfMissing;
         private String remoteName;
+        private String scanStrategy;
+        private boolean snapshotIncludeRemoteRefs;
+        private boolean snapshotIncludeTags;
+        private Integer snapshotMaxRefs;
     }
 }

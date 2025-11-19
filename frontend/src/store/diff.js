@@ -25,6 +25,12 @@ const defaultStats = () => ({
   gaussRemoved: 0,
 });
 
+const defaultMatrixFilters = () => ({
+  statuses: [],
+  coverageRange: [0, 1],
+  includeEmptyCoverage: true,
+});
+
 const defaultCurrentFile = () => ({
   filePath: '',
   module: '',
@@ -48,6 +54,7 @@ export default {
     summary: defaultSummary(),
     overallCoverage: null,
     diffMatrix: [],
+    matrixFilters: defaultMatrixFilters(),
     currentFile: defaultCurrentFile(),
     loadingMatrix: false,
     loadingDetail: false,
@@ -69,6 +76,23 @@ export default {
     },
     setDiffMatrix(state, payload) {
       state.diffMatrix = Array.isArray(payload) ? payload : [];
+    },
+    setMatrixFilters(state, payload = {}) {
+      const incoming = Array.isArray(payload.coverageRange)
+        ? [...payload.coverageRange]
+        : null;
+      state.matrixFilters = {
+        ...state.matrixFilters,
+        statuses: Array.isArray(payload.statuses) ? [...payload.statuses] : state.matrixFilters.statuses,
+        coverageRange: incoming || state.matrixFilters.coverageRange,
+        includeEmptyCoverage:
+          payload.includeEmptyCoverage === undefined
+            ? state.matrixFilters.includeEmptyCoverage
+            : !!payload.includeEmptyCoverage,
+      };
+    },
+    resetMatrixFilters(state) {
+      state.matrixFilters = defaultMatrixFilters();
     },
     setCurrentFile(state, payload) {
       const base = defaultCurrentFile();
@@ -93,6 +117,42 @@ export default {
     },
     setDiffMode(state, mode) {
       state.diffMode = mode;
+    },
+  },
+  getters: {
+    filteredDiffMatrix(state) {
+      if (!Array.isArray(state.diffMatrix)) {
+        return [];
+      }
+      const filters = state.matrixFilters || defaultMatrixFilters();
+      const statuses = Array.isArray(filters.statuses) ? filters.statuses : [];
+      const coverageRange = Array.isArray(filters.coverageRange)
+        ? filters.coverageRange
+        : [0, 1];
+      const includeEmpty =
+        filters.includeEmptyCoverage === undefined
+          ? true
+          : !!filters.includeEmptyCoverage;
+      const [min = 0, max = 1] = coverageRange;
+      return state.diffMatrix.filter((item) => {
+        const statusMatches = !statuses.length || statuses.includes(item.status);
+        if (!statusMatches) {
+          return false;
+        }
+        const value = item.coverage;
+        if (value === undefined || value === null || value === '') {
+          return includeEmpty;
+        }
+        const numeric = Number(value);
+        if (Number.isNaN(numeric)) {
+          return includeEmpty;
+        }
+        const normalizedMin = Number(min);
+        const normalizedMax = Number(max);
+        const lower = Number.isNaN(normalizedMin) ? 0 : normalizedMin;
+        const upper = Number.isNaN(normalizedMax) ? 1 : normalizedMax;
+        return numeric >= lower && numeric <= upper;
+      });
     },
   },
   actions: {

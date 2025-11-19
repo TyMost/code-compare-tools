@@ -58,22 +58,32 @@
     </el-row>
 
     <diff-matrix
-      :data="diffMatrix"
+      :data="displayedDiffMatrix"
       :loading="loadingMatrix"
       @select="handleSelect"
-    />
+    >
+      <template #actions>
+        <diff-matrix-filters
+          :filters="matrixFilters"
+          @change="handleFilterChange"
+          @reset="handleFilterReset"
+        />
+      </template>
+    </diff-matrix>
   </div>
 </template>
 
 <script>
-import { mapState, mapActions } from 'vuex';
+import { mapState, mapActions, mapMutations, mapGetters } from 'vuex';
 import { fetchPresets } from '../api/diff';
 import DiffMatrix from '../components/DiffMatrix.vue';
+import DiffMatrixFilters from '../components/DiffMatrixFilters.vue';
 
 export default {
   name: 'DashboardPage',
   components: {
     DiffMatrix,
+    DiffMatrixFilters,
   },
   data() {
     return {
@@ -83,18 +93,25 @@ export default {
     };
   },
   computed: {
-    ...mapState('diff', ['taskId', 'summary', 'diffMatrix', 'loadingMatrix', 'overallCoverage']),
+    ...mapState('diff', [
+      'taskId',
+      'summary',
+      'loadingMatrix',
+      'overallCoverage',
+      'matrixFilters',
+    ]),
+    ...mapGetters('diff', {
+      displayedDiffMatrix: 'filteredDiffMatrix',
+    }),
   },
   created() {
     this.initialize();
   },
   methods: {
     ...mapActions('diff', ['scanFull']),
+    ...mapMutations('diff', ['setMatrixFilters', 'resetMatrixFilters']),
     async initialize() {
       await this.loadPresets();
-      if (this.selectedPreset) {
-        await this.refreshDiffMatrix();
-      }
     },
     async loadPresets() {
       this.loadingPresets = true;
@@ -128,7 +145,7 @@ export default {
       }
     },
     handlePresetChange() {
-      this.refreshDiffMatrix();
+      this.$message.info('预设已切换，请点击"刷新"拉取最新差异矩阵');
     },
     handleSelect(row) {
       this.$router.push({
@@ -146,6 +163,12 @@ export default {
         return '--';
       }
       return `${(Number(rate) * 100).toFixed(1)}%`;
+    },
+    handleFilterChange(filters) {
+      this.setMatrixFilters(filters || {});
+    },
+    handleFilterReset() {
+      this.resetMatrixFilters();
     },
   },
 };

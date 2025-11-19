@@ -34,6 +34,8 @@ class GitRepoScannerTest {
     private GitBranchFetcher branchFetcher;
     private GitDiffAdapter diffAdapter;
     private GitDiffParser diffParser;
+    private GitRepositoryHelper repositoryHelper;
+    private IncrementalSnapshotScanner snapshotScanner;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -41,6 +43,11 @@ class GitRepoScannerTest {
         branchFetcher = new GitBranchFetcher();
         diffAdapter = new GitDiffAdapter();
         diffParser = new GitDiffParser(diffAdapter);
+        repositoryHelper = new GitRepositoryHelper();
+        SnapshotLocator snapshotLocator = new SnapshotLocator();
+        SnapshotDiffExtractor diffExtractor = new SnapshotDiffExtractor(repositoryHelper);
+        IncrementalSnapshotAssembler assembler = new IncrementalSnapshotAssembler(diffParser, repositoryHelper);
+        snapshotScanner = new IncrementalSnapshotScanner(snapshotLocator, diffExtractor, assembler, repositoryHelper);
     }
 
     @AfterEach
@@ -93,7 +100,7 @@ class GitRepoScannerTest {
                 .fetchIfMissing(true)
                 .build();
 
-        GitRepoScanner scanner = new GitRepoScanner(branchFetcher, diffParser, null);
+        GitRepoScanner scanner = new GitRepoScanner(branchFetcher, diffParser, null, repositoryHelper, snapshotScanner, true);
         DiffSummary summary = scanner.scan(config);
 
         assertThat(summary.getTargetCommitId()).isEqualTo(featureCommit.getId().name());
@@ -124,7 +131,13 @@ class GitRepoScannerTest {
                 .deltaType(DeltaType.DELTA_G)
                 .build();
 
-        GitRepoScanner scanner = new BufferlessScanner(branchFetcher, diffParser);
+        GitRepositoryHelper bufferlessHelper = new GitRepositoryHelper() {
+            @Override
+            public DiffFormatter createDiffFormatter(Repository repository) {
+                return new StrippedDiffFormatter(repository);
+            }
+        };
+        GitRepoScanner scanner = new GitRepoScanner(branchFetcher, diffParser, null, bufferlessHelper, snapshotScanner, true);
         DiffSummary summary = scanner.scan(config);
 
         assertThat(summary.getDiffFiles()).isNotEmpty();
@@ -155,7 +168,7 @@ class GitRepoScannerTest {
                 .includeWorkingTree(true)
                 .build();
 
-        GitRepoScanner scanner = new GitRepoScanner(branchFetcher, diffParser, null);
+        GitRepoScanner scanner = new GitRepoScanner(branchFetcher, diffParser, null, repositoryHelper, snapshotScanner, true);
         DiffSummary summary = scanner.scan(config);
 
         assertThat(summary.getDiffFiles())
@@ -173,7 +186,7 @@ class GitRepoScannerTest {
                 .deltaType(DeltaType.DELTA_O)
                 .build();
 
-        GitRepoScanner scanner = new GitRepoScanner(branchFetcher, diffParser, null);
+        GitRepoScanner scanner = new GitRepoScanner(branchFetcher, diffParser, null, repositoryHelper, snapshotScanner, true);
         DiffSummary summary = scanner.scan(config);
 
         assertThat(summary.getDiffFiles()).isEmpty();
@@ -197,18 +210,6 @@ class GitRepoScannerTest {
                     } catch (IOException ignored) {
                     }
                 });
-    }
-
-    private static class BufferlessScanner extends GitRepoScanner {
-
-        BufferlessScanner(GitBranchFetcher fetcher, GitDiffParser parser) {
-            super(fetcher, parser, null);
-        }
-
-        @Override
-        protected DiffFormatter createDiffFormatter(Repository repository) {
-            return new StrippedDiffFormatter(repository);
-        }
     }
 
     private static class StrippedDiffFormatter extends DiffFormatter {

@@ -3,31 +3,22 @@ package com.example.migratediff.infrastructure.git;
 import com.example.migratediff.domain.diff.DiffFile;
 import com.example.migratediff.domain.diff.DiffSummary;
 import com.example.migratediff.domain.repo.RepoConfig;
+import com.example.migratediff.domain.repo.ScanStrategy;
 import com.example.migratediff.infrastructure.git.GitBranchFetcher.BranchPair;
 import com.example.migratediff.infrastructure.persistence.DiffRepository;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
-import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.revwalk.RevObject;
-import org.eclipse.jgit.revwalk.RevTree;
-import org.eclipse.jgit.revwalk.RevWalk;
-import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.treewalk.AbstractTreeIterator;
-import org.eclipse.jgit.treewalk.CanonicalTreeParser;
-import org.eclipse.jgit.treewalk.EmptyTreeIterator;
-import org.eclipse.jgit.treewalk.FileTreeIterator;
-import org.eclipse.jgit.util.io.DisabledOutputStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Value;
 
-import java.io.File;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -41,11 +32,22 @@ public class GitRepoScanner {
     private final GitBranchFetcher gitBranchFetcher;
     private final GitDiffParser gitDiffParser;
     private final DiffRepository diffRepository;
+    private final GitRepositoryHelper repositoryHelper;
+    private final IncrementalSnapshotScanner incrementalSnapshotScanner;
+    private final boolean exportEnabled;
 
-    public GitRepoScanner(GitBranchFetcher gitBranchFetcher, GitDiffParser gitDiffParser, @Nullable DiffRepository diffRepository) {
+    public GitRepoScanner(GitBranchFetcher gitBranchFetcher,
+                          GitDiffParser gitDiffParser,
+                          @Nullable DiffRepository diffRepository,
+                          GitRepositoryHelper repositoryHelper,
+                          IncrementalSnapshotScanner incrementalSnapshotScanner,
+                          @Value("${migratediff.export.enabled:true}") boolean exportEnabled) {
         this.gitBranchFetcher = gitBranchFetcher;
         this.gitDiffParser = gitDiffParser;
         this.diffRepository = diffRepository;
+        this.repositoryHelper = repositoryHelper;
+        this.incrementalSnapshotScanner = incrementalSnapshotScanner;
+        this.exportEnabled = exportEnabled;
     }
 
     /**
@@ -56,14 +58,53 @@ public class GitRepoScanner {
         if (repoConfig == null || repoConfig.getRepoPath() == null) {
             return emptySummary;
         }
+        ScanStrategy strategy = repoConfig.getScanStrategy() != null ? repoConfig.getScanStrategy() : ScanStrategy.BRANCH;
+        if (strategy == ScanStrategy.SNAPSHOT) {
+            return scanSnapshot(repoConfig, emptySummary);
+        }
+        return scanBranch(repoConfig, emptySummary);
+    }
+
+    /**
+     * Legacy entry that currently returns an empty list.
+     */
+    public List<RepoConfig> scanAvailableRepos() {
+        return new ArrayList<>();
+    }
+
+    private DiffSummary scanSnapshot(RepoConfig repoConfig, DiffSummary emptySummary) {
+        try {
+            LOGGER.info("Starting snapshot scan for repo={}, timeFrom={}, timeTo={}",
+                    safeRepoPath(repoConfig),
+                    repoConfig != null && repoConfig.getBranchFrom() != null ? repoConfig.getBranchFrom().getTimeFrom() : null,
+                    repoConfig != null && repoConfig.getBranchTo() != null ? repoConfig.getBranchTo().getTimeTo() : null);
+            DiffSummary summary = incrementalSnapshotScanner.scan(repoConfig);
+            persistSummary(summary);
+            return summary;
+        } catch (RuntimeException ex) {
+            LOGGER.warn("Snapshot scan failed: {}", ex.getMessage(), ex);
+            return emptySummary;
+        }
+    }
+
+    private DiffSummary scanBranch(RepoConfig repoConfig, DiffSummary emptySummary) {
+        LOGGER.info("Starting branch scan for repo={}, branchFrom={}, branchTo={}",
+                safeRepoPath(repoConfig),
+                repoConfig != null && repoConfig.getBranchFrom() != null ? repoConfig.getBranchFrom().getName() : "null",
+                repoConfig != null && repoConfig.getBranchTo() != null ? repoConfig.getBranchTo().getName() : "null");
         Repository repository = null;
         DiffFormatter formatter = null;
         try {
-            repository = openRepository(repoConfig);
+            repository = repositoryHelper.openRepository(repoConfig);
             BranchPair branchPair = gitBranchFetcher.resolveBranchPair(repository, repoConfig);
-            AbstractTreeIterator baseTree = prepareTreeIterator(repository, branchPair.getBaseId());
-            AbstractTreeIterator targetTree = resolveTargetIterator(repository, branchPair.getTargetId(), repoConfig.isIncludeWorkingTree());
-            formatter = createDiffFormatter(repository);
+            if (branchPair != null) {
+                LOGGER.debug("Branch scan resolved commits: base={}, target={}",
+                        branchPair.getBaseId() != null ? branchPair.getBaseId().name() : "null",
+                        branchPair.getTargetId() != null ? branchPair.getTargetId().name() : "null");
+            }
+            AbstractTreeIterator baseTree = repositoryHelper.prepareTreeIterator(repository, branchPair.getBaseId());
+            AbstractTreeIterator targetTree = repositoryHelper.resolveTargetIterator(repository, branchPair.getTargetId(), repoConfig.isIncludeWorkingTree());
+            formatter = repositoryHelper.createDiffFormatter(repository);
             List<DiffEntry> entries = formatter.scan(baseTree, targetTree);
             LOGGER.debug("Scanned DiffEntry count: {}", entries != null ? entries.size() : 0);
             List<DiffFile> diffFiles = gitDiffParser.parse(entries, repository, formatter, repoConfig);
@@ -97,79 +138,6 @@ public class GitRepoScanner {
         }
     }
 
-    /**
-     * Legacy entry that currently returns an empty list.
-     */
-    public List<RepoConfig> scanAvailableRepos() {
-        return new ArrayList<>();
-    }
-
-    protected DiffFormatter createDiffFormatter(Repository repository) {
-        DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE);
-        formatter.setRepository(repository);
-        formatter.setDetectRenames(true);
-        formatter.setContext(3);
-        return formatter;
-    }
-
-    private Repository openRepository(RepoConfig repoConfig) throws IOException {
-        File repoDirectory = new File(repoConfig.getRepoPath().getAbsolutePath());
-        FileRepositoryBuilder builder = new FileRepositoryBuilder()
-                .readEnvironment()
-                .setMustExist(true)
-                .findGitDir(repoDirectory);
-        if (builder.getGitDir() == null) {
-            File gitDirCandidate = new File(repoDirectory, Constants.DOT_GIT);
-            if (gitDirCandidate.isDirectory()) {
-                builder.setGitDir(gitDirCandidate);
-            } else {
-                builder.setGitDir(repoDirectory);
-            }
-        }
-        return builder.build();
-    }
-
-    private AbstractTreeIterator resolveTargetIterator(Repository repository, @Nullable ObjectId targetId, boolean includeWorkingTree) throws IOException {
-        if (includeWorkingTree) {
-            // includeWorkingTree mode: use the working tree snapshot as the target iterator.
-            return new FileTreeIterator(repository);
-        }
-        return prepareTreeIterator(repository, targetId);
-    }
-
-    private AbstractTreeIterator prepareTreeIterator(Repository repository, @Nullable ObjectId commitId) throws IOException {
-        if (commitId == null) {
-            return new EmptyTreeIterator();
-        }
-        ObjectId treeId = resolveTreeId(repository, commitId);
-        if (treeId == null) {
-            return new EmptyTreeIterator();
-        }
-        CanonicalTreeParser treeParser = new CanonicalTreeParser();
-        org.eclipse.jgit.lib.ObjectReader reader = repository.newObjectReader();
-        try {
-            treeParser.reset(reader, treeId);
-        } finally {
-            reader.close();
-        }
-        return treeParser;
-    }
-
-    private ObjectId resolveTreeId(Repository repository, ObjectId objectId) throws IOException {
-        try (RevWalk revWalk = new RevWalk(repository)) {
-            RevObject revObject = revWalk.parseAny(objectId);
-            if (revObject instanceof RevTree) {
-                return revObject.getId();
-            }
-            if (revObject instanceof RevCommit) {
-                RevCommit commit = (RevCommit) revObject;
-                RevTree tree = commit.getTree();
-                return tree != null ? tree.getId() : null;
-            }
-            return objectId;
-        }
-    }
-
     private DiffSummary buildEmptySummary(RepoConfig repoConfig) {
         return DiffSummary.builder()
                 .repoConfig(repoConfig)
@@ -182,13 +150,24 @@ public class GitRepoScanner {
     }
 
     private void persistSummary(DiffSummary summary) {
-        if (diffRepository == null || summary == null) {
+        if (!exportEnabled || diffRepository == null || summary == null) {
             return;
         }
         try {
             diffRepository.save(summary);
+            LOGGER.debug("Persisted summary for repo={}, base={}, target={}",
+                    safeRepoPath(summary.getRepoConfig()),
+                    summary.getBaseCommitId(),
+                    summary.getTargetCommitId());
         } catch (RuntimeException ex) {
             LOGGER.warn("Persisting DiffSummary failed: {}", ex.getMessage(), ex);
         }
+    }
+
+    private String safeRepoPath(RepoConfig repoConfig) {
+        if (repoConfig == null || repoConfig.getRepoPath() == null) {
+            return "null";
+        }
+        return repoConfig.getRepoPath().getAbsolutePath();
     }
 }

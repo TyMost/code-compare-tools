@@ -42,4 +42,24 @@ public class DiffRequestDTO {
      * Remote name used when fetching, defaults to origin.
      */
     private String remoteName;
+
+    /**
+     * Scan strategy: BRANCH or SNAPSHOT.
+     */
+    private String scanStrategy;
+
+    /**
+     * Include refs/remotes when running snapshot scan.
+     */
+    private Boolean snapshotIncludeRemoteRefs;
+
+    /**
+     * Include refs/tags when running snapshot scan.
+     */
+    private Boolean snapshotIncludeTags;
+
+    /**
+     * Maximum refs inspected by snapshot scan (<=0 means unlimited, defaults to 256).
+     */
+    private Integer snapshotMaxRefs;
 }
