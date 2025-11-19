@@ -250,7 +250,9 @@ public class ScanMapper {
         summaryDTO.setOracleOnly((int) matrix.stream().filter(item -> "oracle-only".equals(item.getStatus())).count());
         summaryDTO.setGaussOnly((int) matrix.stream().filter(item -> "gauss-only".equals(item.getStatus())).count());
         summaryDTO.setMatched((int) matrix.stream().filter(item -> "matched".equals(item.getStatus())).count());
-        summaryDTO.setConsistencyRate(resolveConsistencyRate(report));
+        double overallCoverage = resolveOverallCoverage(report);
+        summaryDTO.setConsistencyRate(overallCoverage);
+        summaryDTO.setOverallCoverage(overallCoverage);
         return summaryDTO;
     }
 
@@ -292,7 +294,7 @@ public class ScanMapper {
         return statsDTO;
     }
 
-    private double resolveConsistencyRate(ScanReport report) {
+    private double resolveOverallCoverage(ScanReport report) {
         if (report.getCoverageSummary() == null) {
             return 0D;
         }

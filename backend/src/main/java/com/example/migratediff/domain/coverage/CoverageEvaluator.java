@@ -156,7 +156,7 @@ public class CoverageEvaluator {
     private double blockSimilarity(DiffBlock origin, DiffBlock target) {
         List<String> originTokens = CoverageUtils.tokenize(resolveContent(origin, true));
         List<String> targetTokens = CoverageUtils.tokenize(resolveContent(target, false));
-        return CoverageUtils.jaccardSimilarity(originTokens, targetTokens);
+        return CoverageUtils.recallSimilarity(originTokens, targetTokens);
     }
 
     private String resolveContent(DiffBlock block, boolean preferSource) {

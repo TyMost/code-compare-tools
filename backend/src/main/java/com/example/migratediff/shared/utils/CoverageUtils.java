@@ -1,8 +1,10 @@
 package com.example.migratediff.shared.utils;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public final class CoverageUtils {
@@ -24,6 +26,39 @@ public final class CoverageUtils {
         Set<String> union = new HashSet<>(sourceSet);
         union.addAll(targetSet);
         return union.isEmpty() ? 1D : (double) intersection.size() / union.size();
+    }
+
+    /**
+     * Recall-style similarity: how much of Delta-O's tokens are covered by Delta-G (intersection / source).
+     */
+    public static double recallSimilarity(List<String> sourceTokens, List<String> targetTokens) {
+        if (sourceTokens == null || sourceTokens.isEmpty()) {
+            return 1D;
+        }
+        if (targetTokens == null || targetTokens.isEmpty()) {
+            return 0D;
+        }
+        int matched = 0;
+        int total = sourceTokens.size();
+
+        Map<String, Integer> targetFreq = new HashMap<>();
+        for (String token : targetTokens) {
+            if (isBlank(token)) {
+                continue;
+            }
+            targetFreq.merge(token, 1, Integer::sum);
+        }
+        for (String token : sourceTokens) {
+            if (isBlank(token)) {
+                continue;
+            }
+            Integer count = targetFreq.get(token);
+            if (count != null && count > 0) {
+                matched++;
+                targetFreq.put(token, count - 1);
+            }
+        }
+        return total == 0 ? 1D : (double) matched / total;
     }
 
     public static int levenshteinDistance(String source, String target) {

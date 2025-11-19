@@ -4,6 +4,7 @@ import com.example.migratediff.domain.diff.DiffBlock;
 import com.example.migratediff.domain.diff.DiffFile;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -57,11 +58,34 @@ class CoverageEvaluatorTest {
 
         CoverageDetail detail = evaluator.evaluateFile(oracleFile, gaussFile);
 
-        double expectedSimilarity = 0.5D; // Jaccard(alpha, beta) 与 alpha 的交集为 1 / 2
+        double expectedSimilarity = 0.5D; // 只匹配到 alpha，占 ΔO 两个 token 的 1/2
         assertEquals(expectedSimilarity, detail.getCoverage(), 1e-6, "覆盖率应等于相似度加权结果");
         assertEquals(expectedSimilarity, detail.getMatchedLines(), 1e-6, "加权匹配行数应等于相似度 × 行数");
         assertEquals(1, detail.getTotalLines(), "单行文本的总行数应为 1");
         assertTrue(detail.getUnmatchedBlocks().contains(oracleBlock), "未达展示阈值的块应记录在 unmatched 列表中");
+    }
+
+    @Test
+    void evaluateFile_shouldTreatTargetSupersetAsFullCoverage() {
+        DiffBlock oracleBlock = DiffBlock.builder()
+                .contentFrom("alpha beta")
+                .build();
+        DiffBlock gaussBlock = DiffBlock.builder()
+                .contentTo("prefix alpha beta suffix")
+                .build();
+        DiffFile oracleFile = DiffFile.builder()
+                .relativePath("demo/Superset.java")
+                .blocks(Collections.singletonList(oracleBlock))
+                .build();
+        DiffFile gaussFile = DiffFile.builder()
+                .relativePath("demo/Superset.java")
+                .blocks(Collections.singletonList(gaussBlock))
+                .build();
+
+        CoverageDetail detail = evaluator.evaluateFile(oracleFile, gaussFile);
+
+        assertEquals(1.0D, detail.getCoverage(), 1e-6, "ΔO 被 ΔG 完整包含时覆盖率应为 100%");
+        assertEquals(1.0D, detail.getMatchedLines(), 1e-6, "加权匹配行数应等于总行数");
     }
 
     @Test
@@ -98,11 +122,11 @@ class CoverageEvaluatorTest {
                 .build();
 
         CoverageSummary summary = evaluator.evaluateFiles(
-                java.util.Arrays.asList(oracleFile1, oracleFile2),
-                java.util.Arrays.asList(gaussFile1, gaussFile2)
+                Arrays.asList(oracleFile1, oracleFile2),
+                Arrays.asList(gaussFile1, gaussFile2)
         );
 
-        double expectedMatched = 1.0D + 0.5D; // 第一文件完全匹配，第二文件相似度 0.5
+        double expectedMatched = 1.0D + 0.5D; // 第一文件完全匹配，第二文件仅覆盖一半 token
         double expectedTotal = 2.0D;          // 两个文件各 1 行，合计 2 行
 
         assertEquals(expectedMatched, summary.getTotalMatchedLines(), 1e-6, "总加权匹配行数应为两文件加总");
