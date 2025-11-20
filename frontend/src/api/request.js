@@ -80,14 +80,27 @@ function normalizeResponse(payload) {
   };
 }
 
-export default async function request(method, url, body = null) {
+export default async function request(method, url, body = null, options = {}) {
   const methodUpper = method.toUpperCase();
+  const {
+    responseType,
+    headers,
+    rawResponse = false,
+    params,
+    timeout,
+  } = options || {};
   const response = await apiClient({
     method,
     url,
     data: methodUpper === 'GET' ? undefined : body,
-    params: methodUpper === 'GET' ? body : undefined,
+    params: methodUpper === 'GET' ? (body || params) : params,
+    responseType,
+    headers,
+    timeout,
   });
 
+  if (rawResponse || responseType === 'blob') {
+    return response;
+  }
   return normalizeResponse(response.data);
 }

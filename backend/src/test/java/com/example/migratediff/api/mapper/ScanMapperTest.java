@@ -2,6 +2,8 @@ package com.example.migratediff.api.mapper;
 
 import com.example.migratediff.api.dto.DiffRequestDTO;
 import com.example.migratediff.api.dto.ScanRequestDTO;
+import com.example.migratediff.api.validation.DiffRequestValidator;
+import com.example.migratediff.application.scan.DiffMatrixAssembler;
 import com.example.migratediff.application.scan.ScanInput;
 import com.example.migratediff.application.scan.ScanMode;
 import com.example.migratediff.application.scan.ScanPresetProperties;
@@ -48,7 +50,11 @@ class ScanMapperTest {
         preset.setTarget(target);
 
         properties.setPresets(Collections.singletonList(preset));
-        mapper = new ScanMapper(new DiffMapper("BRANCH"), properties);
+        mapper = new ScanMapper(
+                new DiffMapper("BRANCH"),
+                properties,
+                new DiffMatrixAssembler(),
+                new DiffRequestValidator());
     }
 
     @Test

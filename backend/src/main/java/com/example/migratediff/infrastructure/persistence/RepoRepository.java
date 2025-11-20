@@ -14,4 +14,6 @@ public interface RepoRepository {
     Optional<RepoConfig> findById(String id);
 
     List<RepoConfig> findAll();
+
+    void deleteById(String id);
 }

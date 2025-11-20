@@ -42,3 +42,22 @@ export async function fetchDetail({ taskId, filePath }) {
 export function fetchPresets() {
   return request('GET', '/api/scan/presets').then((response) => response.data);
 }
+
+export function fetchScanCache() {
+  return request('GET', '/api/scan/cache').then((response) => response.data || []);
+}
+
+export function clearScanCache() {
+  return request('DELETE', '/api/scan/cache');
+}
+
+export function fetchRecentTasks() {
+  return request('GET', '/api/scan/tasks').then((response) => response.data || []);
+}
+
+export function exportMultiReport(payload) {
+  return request('POST', '/api/scan/report/aggregate', payload, {
+    responseType: 'blob',
+    rawResponse: true,
+  });
+}

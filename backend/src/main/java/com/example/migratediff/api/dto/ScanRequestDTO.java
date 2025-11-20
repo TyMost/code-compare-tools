@@ -22,6 +22,16 @@ public class ScanRequestDTO {
      */
     private String presetName;
 
+    /**
+     * Optional identifier describing which repository configuration initiated this scan.
+     */
+    private String repoId;
+
+    /**
+     * Friendly label for UI display when reading cached snapshots.
+     */
+    private String repoName;
+
     @Valid
     private DiffRequestDTO oracle;
 

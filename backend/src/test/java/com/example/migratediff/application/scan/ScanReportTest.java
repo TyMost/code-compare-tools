@@ -34,7 +34,16 @@ class ScanReportTest {
                 .repoConfig(repoConfig(gaussRoot, RepoType.GAUSS))
                 .diffFiles(Collections.emptyList())
                 .build();
-        ScanReport report = new ScanReport("task", ScanMode.FULL, oracleSummary, gaussSummary, null);
+        ScanReport report = new ScanReport(
+                "task",
+                ScanMode.FULL,
+                "preset",
+                "repo-task",
+                "测试仓库",
+                true,
+                oracleSummary,
+                gaussSummary,
+                null);
 
         DiffSummary gaussOverview = report.overviewForGaussFile("src/Main.java");
 

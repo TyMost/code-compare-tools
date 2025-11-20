@@ -14,9 +14,11 @@ import com.example.migratediff.domain.migration.DecisionType;
 import com.example.migratediff.domain.migration.MigrationResult;
 import com.example.migratediff.domain.migration.MigrationSummary;
 import com.example.migratediff.domain.migration.MigrationTask;
+import com.example.migratediff.infrastructure.persistence.ScanReportRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
+import org.springframework.lang.Nullable;
 
 import java.security.SecureRandom;
 import java.util.ArrayList;
@@ -34,18 +36,21 @@ public class ScanAppService {
     private final MigrationAppService migrationAppService;
     private final ScanResultStore scanResultStore;
     private final ConcurrentMap<MigrationKey, String> migrationTaskIndex = new ConcurrentHashMap<>();
+    private final ScanReportRepository scanReportRepository;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public ScanAppService(DiffAppService diffAppService,
                           CoverageAppService coverageAppService,
                           GenerateAppService generateAppService,
                           MigrationAppService migrationAppService,
-                          ScanResultStore scanResultStore) {
+                          ScanResultStore scanResultStore,
+                          @Nullable ScanReportRepository scanReportRepository) {
         this.diffAppService = diffAppService;
         this.coverageAppService = coverageAppService;
         this.generateAppService = generateAppService;
         this.migrationAppService = migrationAppService;
         this.scanResultStore = scanResultStore;
+        this.scanReportRepository = scanReportRepository;
     }
 
     public ScanReport scan(ScanInput input) {
@@ -57,34 +62,48 @@ public class ScanAppService {
                 gauss,
                 input.isPersistResult()
         );
-        ScanReport report = new ScanReport(input.getTaskId(), input.getMode(), oracle, gauss, coverageSummary);
+        ScanReport report = new ScanReport(
+                input.getTaskId(),
+                input.getMode(),
+                input.getPresetName(),
+                input.getRepoId(),
+                input.getRepoName(),
+                input.isPersistResult(),
+                oracle,
+                gauss,
+                coverageSummary);
         scanResultStore.save(report);
+        persistReport(report);
         return report;
     }
 
     public Optional<DiffDetail> fetchDetail(String taskId, String filePath) {
-        return scanResultStore.find(taskId)
-                .flatMap(report -> buildDetail(report, filePath));
+        String normalizedPath = normalizeFilePath(filePath);
+        return resolveReport(taskId)
+                .flatMap(report -> buildDetail(report, normalizedPath));
     }
 
     public MigrationOperationResult generateMigration(String taskId, String filePath) {
         PreparedMigrationContext context = prepareMigrationContext(taskId, filePath);
         MigrationSummary previewed = migrationAppService.preview(context.summary);
-        recordMigrationTask(context.report.getTaskId(), filePath, previewed);
-        return new MigrationOperationResult(context.report.getTaskId(), filePath, previewed.getResult());
+        String normalizedPath = normalizeFilePath(filePath);
+        recordMigrationTask(context.report.getTaskId(), normalizedPath, previewed);
+        return new MigrationOperationResult(context.report.getTaskId(), normalizedPath, previewed.getResult());
     }
 
     public MigrationOperationResult applyMigration(String taskId, String filePath) {
         PreparedMigrationContext context = prepareMigrationContext(taskId, filePath);
         MigrationSummary applied = migrationAppService.apply(context.summary);
-        recordMigrationTask(context.report.getTaskId(), filePath, applied);
+        String normalizedPath = normalizeFilePath(filePath);
+        recordMigrationTask(context.report.getTaskId(), normalizedPath, applied);
         attachLogId(applied.getResult());
-        return new MigrationOperationResult(context.report.getTaskId(), filePath, applied.getResult());
+        return new MigrationOperationResult(context.report.getTaskId(), normalizedPath, applied.getResult());
     }
 
     public MigrationOperationResult revertMigration(String taskId, String filePath) {
         PreparedMigrationContext context = prepareMigrationContext(taskId, filePath);
-        String migrationTaskId = resolveMigrationTaskId(context.report.getTaskId(), filePath);
+        String normalizedPath = normalizeFilePath(filePath);
+        String migrationTaskId = resolveMigrationTaskId(context.report.getTaskId(), normalizedPath);
         if (!StringUtils.hasText(migrationTaskId)) {
             throw new IllegalStateException("Migration task not found, please generate first");
         }
@@ -92,7 +111,7 @@ public class ScanAppService {
         task.setId(migrationTaskId);
         MigrationResult result = migrationAppService.revert(task);
         attachLogId(result);
-        return new MigrationOperationResult(context.report.getTaskId(), filePath, result);
+        return new MigrationOperationResult(context.report.getTaskId(), normalizedPath, result);
     }
 
     private Optional<DiffDetail> buildDetail(ScanReport report, String filePath) {
@@ -109,19 +128,18 @@ public class ScanAppService {
     }
 
     private PreparedMigrationContext prepareMigrationContext(String taskId, String filePath) {
-        ScanReport report = scanResultStore.find(taskId)
+        String normalizedPath = normalizeFilePath(filePath);
+        ScanReport report = resolveReport(taskId)
                 .orElseThrow(() -> new IllegalStateException("No cached scan result available, please run a scan first"));
-        DiffFile oracleFile = report.findOracle(filePath)
-                .orElse(null);
-        DiffFile gaussFile = report.findGauss(filePath)
-                .orElse(null);
+        DiffFile oracleFile = report.findOracle(normalizedPath).orElse(null);
+        DiffFile gaussFile = report.findGauss(normalizedPath).orElse(null);
         if (oracleFile == null && gaussFile == null) {
-            throw new IllegalStateException("Requested file not present in scan result: " + filePath);
+            throw new IllegalStateException("Requested file not present in scan result: " + normalizedPath);
         }
 
         MigrationSummary summary = new MigrationSummary();
-        summary.setDeltaOSummary(report.overviewForOracleFile(filePath));
-        summary.setDeltaGSummary(report.overviewForGaussFile(filePath));
+        summary.setDeltaOSummary(report.overviewForOracleFile(normalizedPath));
+        summary.setDeltaGSummary(report.overviewForGaussFile(normalizedPath));
 
         MigrationTask task = new MigrationTask();
         task.setDeltaGroup(DeltaGroup.builder()
@@ -137,12 +155,12 @@ public class ScanAppService {
         if (summary == null || summary.getTask() == null || !StringUtils.hasText(summary.getTask().getId())) {
             return;
         }
-        MigrationKey key = new MigrationKey(taskId, filePath);
+        MigrationKey key = new MigrationKey(taskId, normalizeFilePath(filePath));
         migrationTaskIndex.put(key, summary.getTask().getId());
     }
 
     private String resolveMigrationTaskId(String taskId, String filePath) {
-        MigrationKey key = new MigrationKey(taskId, filePath);
+        MigrationKey key = new MigrationKey(taskId, normalizeFilePath(filePath));
         return migrationTaskIndex.get(key);
     }
 
@@ -238,6 +256,40 @@ public class ScanAppService {
 
     private String snippetOf(DiffBlock block) {
         return block == null ? "" : block.getContentTo();
+    }
+
+    public void clearRuntimeCaches() {
+        scanResultStore.clear();
+        migrationTaskIndex.clear();
+    }
+
+    private void persistReport(ScanReport report) {
+        if (report == null || scanReportRepository == null || !report.isPersisted()) {
+            return;
+        }
+        scanReportRepository.save(report);
+    }
+
+    private Optional<ScanReport> resolveReport(String taskId) {
+        Optional<ScanReport> report = scanResultStore.find(taskId);
+        if (report.isPresent()) {
+            return report;
+        }
+        if (!StringUtils.hasText(taskId) || scanReportRepository == null) {
+            return report;
+        }
+        return scanReportRepository.find(taskId)
+                .map(loaded -> {
+                    scanResultStore.save(loaded);
+                    return loaded;
+                });
+    }
+
+    private String normalizeFilePath(String filePath) {
+        if (!StringUtils.hasText(filePath)) {
+            return filePath;
+        }
+        return filePath.replace('\\', '/').trim();
     }
 
     private static class MigrationKey {

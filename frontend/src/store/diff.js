@@ -1,13 +1,25 @@
 import {
   scanFull as scanFullRequest,
   fetchDetail as fetchDetailRequest,
+  fetchRecentTasks as fetchRecentTasksRequest,
+  exportMultiReport as exportMultiReportRequest,
+  fetchScanCache as fetchScanCacheRequest,
+  clearScanCache as clearScanCacheRequest,
 } from '../api/diff';
 import {
   generateMigration as generateMigrationRequest,
   applyMigration as applyMigrationRequest,
   revertMigration as revertMigrationRequest,
 } from '../api/migrate';
+import { fetchDefaultProfiles as fetchRepoProfilesBundle, validateProfiles as validateRepoProfiles } from '../api/repos';
 import { createTaskId } from '../utils/uid';
+import { downloadBlob, parseFilename } from '../utils/download';
+
+const PROFILE_STORAGE_KEY = 'migratediff.repoProfiles';
+const DEFAULT_BUNDLE_META = () => ({
+  version: '',
+  generatedAt: '',
+});
 
 const defaultSummary = () => ({
   totalFiles: 0,
@@ -47,6 +59,191 @@ const defaultCurrentFile = () => ({
   stats: defaultStats(),
 });
 
+function sanitizeCoverageRange(range) {
+  if (!Array.isArray(range) || range.length !== 2) {
+    return [0, 1];
+  }
+  const [min, max] = range;
+  const lower = Number.isNaN(Number(min)) ? 0 : Number(min);
+  const upper = Number.isNaN(Number(max)) ? 1 : Number(max);
+  return [Math.max(0, lower), Math.min(1, upper)];
+}
+
+function buildExportFilters(source = {}) {
+  return {
+    statuses: Array.isArray(source.statuses) ? [...source.statuses] : [],
+    coverageRange: sanitizeCoverageRange(source.coverageRange),
+    includeEmptyCoverage:
+      source.includeEmptyCoverage === undefined ? true : !!source.includeEmptyCoverage,
+  };
+}
+
+function resolveFilenameFromResponse(response, fallback = 'scan-report.csv') {
+  const disposition =
+    response?.headers?.['content-disposition'] || response?.headers?.get?.('content-disposition');
+  const parsed = parseFilename(disposition);
+  return parsed || fallback;
+}
+
+function readProfilesFromStorage() {
+  if (typeof window === 'undefined') {
+    return {
+      profiles: [],
+      meta: DEFAULT_BUNDLE_META(),
+    };
+  }
+  try {
+    const stored = window.localStorage.getItem(PROFILE_STORAGE_KEY);
+    if (!stored) {
+      return {
+        profiles: [],
+        meta: DEFAULT_BUNDLE_META(),
+      };
+    }
+    const parsed = JSON.parse(stored);
+    if (Array.isArray(parsed)) {
+      return {
+        profiles: parsed,
+        meta: DEFAULT_BUNDLE_META(),
+      };
+    }
+    if (parsed && Array.isArray(parsed.profiles)) {
+      return {
+        profiles: parsed.profiles,
+        meta: buildBundleMeta(parsed),
+      };
+    }
+    return {
+      profiles: [],
+      meta: DEFAULT_BUNDLE_META(),
+    };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn('[profiles] failed to parse storage payload', error);
+    return {
+      profiles: [],
+      meta: DEFAULT_BUNDLE_META(),
+    };
+  }
+}
+
+function writeProfilesToStorage(profiles = [], meta = DEFAULT_BUNDLE_META()) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const payload = {
+    version: meta?.version || '',
+    generatedAt: meta?.generatedAt || '',
+    profiles,
+  };
+  window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(payload));
+}
+
+function cloneDiffRequest(request = {}) {
+  return {
+    ...request,
+  };
+}
+
+function buildBundleMeta(source = {}) {
+  if (!source) {
+    return DEFAULT_BUNDLE_META();
+  }
+  return {
+    version: source.version || '',
+    generatedAt: source.generatedAt || '',
+  };
+}
+
+function mergeBundleMeta(current = DEFAULT_BUNDLE_META(), incoming = DEFAULT_BUNDLE_META()) {
+  const meta = DEFAULT_BUNDLE_META();
+  meta.version = incoming.version || current.version || '';
+  meta.generatedAt = incoming.generatedAt || current.generatedAt || '';
+  return meta;
+}
+
+function normalizeBundleInput(payload) {
+  if (!payload) {
+    return {
+      profiles: [],
+      meta: DEFAULT_BUNDLE_META(),
+    };
+  }
+  if (payload.bundle || payload.replaceExisting !== undefined) {
+    return normalizeBundleInput(payload.bundle);
+  }
+  if (Array.isArray(payload)) {
+    return {
+      profiles: payload,
+      meta: DEFAULT_BUNDLE_META(),
+    };
+  }
+  if (Array.isArray(payload.profiles)) {
+    return {
+      profiles: payload.profiles,
+      meta: buildBundleMeta(payload),
+    };
+  }
+  return {
+    profiles: [],
+    meta: DEFAULT_BUNDLE_META(),
+  };
+}
+
+function normalizeProfile(record = {}, fallbackVersion = '') {
+  const oracle = record.oracle || record.source;
+  const gauss = record.gauss || record.target;
+  if (!oracle || !gauss) {
+    throw new Error('配置缺少 oracle 或 gauss 字段');
+  }
+  const id = (record.id || record.repoId || record.name || record.code || '').trim()
+    || `profile-${createTaskId()}`;
+  const name = (record.name || record.repoName || id).trim();
+  return {
+    id,
+    name,
+    presetName: record.presetName || '',
+    version: record.version || fallbackVersion || '',
+    oracle: cloneDiffRequest(oracle),
+    gauss: cloneDiffRequest(gauss),
+  };
+}
+
+function normalizeProfiles(payload, fallbackVersion = '') {
+  if (!payload) {
+    return [];
+  }
+  const source = Array.isArray(payload) ? payload : [payload];
+  const results = [];
+  source.forEach((item) => {
+    try {
+      results.push(normalizeProfile(item, fallbackVersion));
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn('[profiles] 忽略无效配置', error?.message);
+    }
+  });
+  return results;
+}
+
+function mergeProfiles(existing = [], incoming = []) {
+  if (!incoming.length) {
+    return existing;
+  }
+  const map = new Map(existing.map((profile) => [profile.id, profile]));
+  incoming.forEach((profile) => {
+    map.set(profile.id, profile);
+  });
+  return Array.from(map.values());
+}
+
+function resolveSnapshotKey(snapshot) {
+  if (!snapshot) {
+    return '';
+  }
+  return snapshot.repoId || snapshot.taskId || '';
+}
+
 export default {
   namespaced: true,
   state: () => ({
@@ -60,6 +257,15 @@ export default {
     loadingDetail: false,
     migrating: false,
     diffMode: 'deltaO',
+    availableTasks: [],
+    loadingTasks: false,
+    exportingReport: false,
+    repoProfiles: [],
+    selectedProfileIds: [],
+    cachedSnapshots: [],
+    loadingSnapshots: false,
+    activeRepoId: '',
+    profileBundleMeta: DEFAULT_BUNDLE_META(),
   }),
   mutations: {
     setTaskId(state, taskId) {
@@ -118,6 +324,37 @@ export default {
     setDiffMode(state, mode) {
       state.diffMode = mode;
     },
+    setAvailableTasks(state, tasks) {
+      state.availableTasks = Array.isArray(tasks) ? [...tasks] : [];
+    },
+    setLoadingTasks(state, flag) {
+      state.loadingTasks = flag;
+    },
+    setExportingReport(state, flag) {
+      state.exportingReport = flag;
+    },
+    setRepoProfiles(state, profiles) {
+      state.repoProfiles = Array.isArray(profiles) ? [...profiles] : [];
+    },
+    setSelectedProfileIds(state, ids) {
+      state.selectedProfileIds = Array.isArray(ids) ? [...ids] : [];
+    },
+    setCachedSnapshots(state, snapshots) {
+      state.cachedSnapshots = Array.isArray(snapshots) ? [...snapshots] : [];
+    },
+    setLoadingSnapshots(state, flag) {
+      state.loadingSnapshots = flag;
+    },
+    setActiveRepoId(state, repoId) {
+      state.activeRepoId = repoId || '';
+    },
+    setProfileBundleMeta(state, meta) {
+      const next = meta || {};
+      state.profileBundleMeta = {
+        version: next.version || '',
+        generatedAt: next.generatedAt || '',
+      };
+    },
   },
   getters: {
     filteredDiffMatrix(state) {
@@ -156,15 +393,153 @@ export default {
     },
   },
   actions: {
+    async fetchRecentTasks({ commit }) {
+      commit('setLoadingTasks', true);
+      try {
+        const tasks = await fetchRecentTasksRequest();
+        commit('setAvailableTasks', tasks);
+        return tasks;
+      } finally {
+        commit('setLoadingTasks', false);
+      }
+    },
+    async loadProfiles({ commit, dispatch }, options = {}) {
+      const { bootstrapDefaults = true } = options || {};
+      const stored = readProfilesFromStorage();
+      commit('setRepoProfiles', stored.profiles);
+      commit('setProfileBundleMeta', stored.meta);
+      if (!stored.profiles.length) {
+        commit('setSelectedProfileIds', []);
+        if (bootstrapDefaults) {
+          try {
+            const defaults = await dispatch('syncDefaultProfiles');
+            return defaults;
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.warn('[profiles] failed to sync defaults', error);
+          }
+        }
+      }
+      return stored.profiles;
+    },
+    async syncDefaultProfiles({ commit }) {
+      const bundle = await fetchRepoProfilesBundle();
+      const normalized = normalizeProfiles(bundle?.profiles || [], bundle?.version || '');
+      if (!normalized.length) {
+        return [];
+      }
+      const meta = buildBundleMeta(bundle);
+      commit('setRepoProfiles', normalized);
+      commit('setProfileBundleMeta', meta);
+      commit('setSelectedProfileIds', normalized.map((profile) => profile.id));
+      writeProfilesToStorage(normalized, meta);
+      return normalized;
+    },
+    async importProfiles({ state, commit }, payload) {
+      const replaceExisting = !!(payload && payload.replaceExisting);
+      const bundleWrapper = payload && payload.bundle ? payload.bundle : payload;
+      const bundle = normalizeBundleInput(bundleWrapper);
+      if (!bundle.profiles.length) {
+        throw new Error('配置文件为空或格式无效');
+      }
+      await validateRepoProfiles({
+        version: bundle.meta.version,
+        generatedAt: bundle.meta.generatedAt,
+        profiles: bundle.profiles,
+      });
+      const normalized = normalizeProfiles(bundle.profiles, bundle.meta.version);
+      const merged = replaceExisting ? normalized : mergeProfiles(state.repoProfiles, normalized);
+      const nextMeta = replaceExisting
+        ? bundle.meta
+        : mergeBundleMeta(state.profileBundleMeta, bundle.meta);
+      commit('setRepoProfiles', merged);
+      commit('setProfileBundleMeta', nextMeta);
+      writeProfilesToStorage(merged, nextMeta);
+      return merged;
+    },
+    removeProfiles({ state, commit }, ids = []) {
+      if (!Array.isArray(ids) || !ids.length) {
+        return state.repoProfiles;
+      }
+      const remain = state.repoProfiles.filter((profile) => !ids.includes(profile.id));
+      commit('setRepoProfiles', remain);
+      writeProfilesToStorage(remain, state.profileBundleMeta);
+      const nextSelection = state.selectedProfileIds.filter((id) => remain.find((item) => item.id === id));
+      commit('setSelectedProfileIds', nextSelection);
+      return remain;
+    },
+    exportProfiles({ state }) {
+      if (!state.repoProfiles.length) {
+        throw new Error('暂无配置可导出');
+      }
+      const meta = state.profileBundleMeta || DEFAULT_BUNDLE_META();
+      return {
+        version: meta.version || `local-${Date.now()}`,
+        generatedAt: meta.generatedAt || new Date().toISOString(),
+        profiles: state.repoProfiles,
+      };
+    },
+    async loadSnapshots({ commit, dispatch }, { autoApply = false, preferredRepoId } = {}) {
+      commit('setLoadingSnapshots', true);
+      try {
+        const snapshots = await fetchScanCacheRequest();
+        commit('setCachedSnapshots', snapshots || []);
+        if (
+          autoApply
+          && Array.isArray(snapshots)
+          && snapshots.length > 0
+        ) {
+          const target = snapshots.find((item) => resolveSnapshotKey(item) === preferredRepoId)
+            || snapshots[0];
+          await dispatch('applySnapshot', target);
+        }
+        return snapshots;
+      } finally {
+        commit('setLoadingSnapshots', false);
+      }
+    },
+    async applySnapshot({ commit }, snapshot) {
+      if (!snapshot || !snapshot.response) {
+        commit('setActiveRepoId', '');
+        commit('setTaskId', '');
+        commit('setSummary', defaultSummary());
+        commit('setOverallCoverage', null);
+        commit('setDiffMatrix', []);
+        commit('setCurrentFile', {});
+        return null;
+      }
+      const key = resolveSnapshotKey(snapshot);
+      commit('setActiveRepoId', key);
+      const response = snapshot.response;
+      commit('setTaskId', response?.taskId || snapshot.taskId || '');
+      commit(
+        'setOverallCoverage',
+        response?.summary?.overallCoverage ?? response?.overallCoverage ?? null,
+      );
+      commit('setSummary', response?.summary || {});
+      commit('setDiffMatrix', response?.diffMatrix || []);
+      commit('setCurrentFile', {});
+      return snapshot;
+    },
+    async clearSnapshots({ commit }) {
+      await clearScanCacheRequest();
+      commit('setCachedSnapshots', []);
+      commit('setActiveRepoId', '');
+      commit('setTaskId', '');
+      commit('setSummary', defaultSummary());
+      commit('setOverallCoverage', null);
+      commit('setDiffMatrix', []);
+      commit('setCurrentFile', {});
+    },
     async scanFull({ state, commit }, payload = {}) {
       commit('setLoadingMatrix', true);
       try {
-        const currentTaskId = state.taskId || createTaskId();
+        const currentTaskId = payload.taskId || state.taskId || createTaskId();
         const response = await scanFullRequest({
-          taskId: currentTaskId,
           ...payload,
+          taskId: currentTaskId,
         });
-        commit('setTaskId', response?.taskId || '');
+        commit('setTaskId', response?.taskId || currentTaskId || '');
         commit('setSummary', response?.summary || {});
         commit(
           'setOverallCoverage',
@@ -176,6 +551,29 @@ export default {
       } finally {
         commit('setLoadingMatrix', false);
       }
+    },
+    async scanProfiles({ state, dispatch }, { profileIds }) {
+      const targets = Array.isArray(profileIds) && profileIds.length
+        ? state.repoProfiles.filter((profile) => profileIds.includes(profile.id))
+        : [];
+      if (!targets.length) {
+        throw new Error('请选择需要刷新的仓库配置');
+      }
+      for (const profile of targets) {
+        await dispatch('scanFull', {
+          taskId: createTaskId(),
+          repoId: profile.id,
+          repoName: profile.name,
+          presetName: profile.presetName,
+          persistResult: true,
+          oracle: profile.oracle,
+          gauss: profile.gauss,
+        });
+      }
+      await dispatch('loadSnapshots', {
+        autoApply: true,
+        preferredRepoId: targets[targets.length - 1]?.id,
+      });
     },
     async fetchDetail({ state, commit }, { filePath, taskId } = {}) {
       const targetFilePath = filePath || state.currentFile.filePath;
@@ -278,6 +676,31 @@ export default {
         return result;
       } finally {
         commit('setMigrating', false);
+      }
+    },
+    async exportMultiReport({ commit }, { repos, filters, format = 'csv' } = {}) {
+      if (!Array.isArray(repos) || repos.length === 0) {
+        throw new Error('请至少选择一个任务');
+      }
+      const exportFilters = buildExportFilters(filters || {});
+      commit('setExportingReport', true);
+      try {
+        const response = await exportMultiReportRequest({
+          repos,
+          statuses: exportFilters.statuses,
+          coverageMin: exportFilters.coverageRange[0],
+          coverageMax: exportFilters.coverageRange[1],
+          includeEmptyCoverage: exportFilters.includeEmptyCoverage,
+          format,
+        });
+        const filename = resolveFilenameFromResponse(
+          response,
+          `scan-report-multi-${Date.now()}.${format}`,
+        );
+        downloadBlob(response.data, filename);
+        return filename;
+      } finally {
+        commit('setExportingReport', false);
       }
     },
   },

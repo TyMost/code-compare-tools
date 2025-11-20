@@ -5,15 +5,21 @@ import com.example.migratediff.api.dto.DiffDetailResponseDTO;
 import com.example.migratediff.api.dto.DiffMatrixItemDTO;
 import com.example.migratediff.api.dto.DiffRequestDTO;
 import com.example.migratediff.api.dto.DiffStatsDTO;
+import com.example.migratediff.api.dto.ScanCacheEntryDTO;
 import com.example.migratediff.api.dto.ScanPresetDTO;
 import com.example.migratediff.api.dto.ScanRequestDTO;
 import com.example.migratediff.api.dto.ScanResponseDTO;
 import com.example.migratediff.api.dto.ScanSummaryDTO;
+import com.example.migratediff.api.dto.ScanTaskSummaryDTO;
+import com.example.migratediff.api.validation.DiffRequestValidator;
 import com.example.migratediff.application.scan.DiffDetail;
+import com.example.migratediff.application.scan.DiffMatrixAssembler;
+import com.example.migratediff.application.scan.DiffMatrixRow;
 import com.example.migratediff.application.scan.ScanInput;
 import com.example.migratediff.application.scan.ScanMode;
 import com.example.migratediff.application.scan.ScanPresetProperties;
 import com.example.migratediff.application.scan.ScanReport;
+import com.example.migratediff.application.scan.ScanSnapshot;
 import com.example.migratediff.domain.coverage.CoverageDetail;
 import com.example.migratediff.domain.diff.DiffBlock;
 import com.example.migratediff.domain.diff.DiffFile;
@@ -26,10 +32,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 @Component
@@ -42,18 +45,25 @@ public class ScanMapper {
 
     private final DiffMapper diffMapper;
     private final ScanPresetProperties presetProperties;
+    private final DiffMatrixAssembler diffMatrixAssembler;
+    private final DiffRequestValidator diffRequestValidator;
 
-    public ScanMapper(DiffMapper diffMapper, ScanPresetProperties presetProperties) {
+    public ScanMapper(DiffMapper diffMapper,
+                      ScanPresetProperties presetProperties,
+                      DiffMatrixAssembler diffMatrixAssembler,
+                      DiffRequestValidator diffRequestValidator) {
         this.diffMapper = diffMapper;
         this.presetProperties = presetProperties;
+        this.diffMatrixAssembler = diffMatrixAssembler;
+        this.diffRequestValidator = diffRequestValidator;
     }
 
     public ScanInput toInput(ScanRequestDTO requestDTO, ScanMode mode) {
         ScanPresetProperties.ScanPreset preset = resolvePreset(requestDTO.getPresetName());
         DiffRequestDTO oracleRequest = mergeWithPreset(requestDTO.getOracle(), preset != null ? preset.getSource() : null);
         DiffRequestDTO gaussRequest = mergeWithPreset(requestDTO.getGauss(), preset != null ? preset.getTarget() : null);
-        validateDiffRequest(oracleRequest, "oracle");
-        validateDiffRequest(gaussRequest, "gauss");
+        diffRequestValidator.validate(oracleRequest, "oracle");
+        diffRequestValidator.validate(gaussRequest, "gauss");
         DiffSummary oracleSummary = diffMapper.toDomain(oracleRequest, com.example.migratediff.domain.diff.DeltaType.DELTA_O);
         DiffSummary gaussSummary = diffMapper.toDomain(gaussRequest, com.example.migratediff.domain.diff.DeltaType.DELTA_G);
         if (mode == ScanMode.INCREMENTAL) {
@@ -63,6 +73,9 @@ public class ScanMapper {
         return ScanInput.builder()
                 .taskId(requestDTO.getTaskId())
                 .persistResult(requestDTO.isPersistResult())
+                .presetName(requestDTO.getPresetName())
+                .repoId(trimToNull(requestDTO.getRepoId()))
+                .repoName(trimToNull(requestDTO.getRepoName()))
                 .oracleSummary(oracleSummary)
                 .gaussSummary(gaussSummary)
                 .mode(mode)
@@ -72,8 +85,11 @@ public class ScanMapper {
     public ScanResponseDTO toResponse(ScanReport report) {
         ScanResponseDTO responseDTO = new ScanResponseDTO();
         responseDTO.setTaskId(report.getTaskId());
-        List<DiffMatrixItemDTO> matrix = buildMatrix(report);
-        responseDTO.setSummary(buildSummary(report, matrix));
+        List<DiffMatrixRow> rows = diffMatrixAssembler.assemble(report);
+        List<DiffMatrixItemDTO> matrix = rows.stream()
+                .map(this::toMatrixItem)
+                .collect(Collectors.toList());
+        responseDTO.setSummary(buildSummary(report, rows));
         responseDTO.getDiffMatrix().addAll(matrix);
         return responseDTO;
     }
@@ -100,6 +116,44 @@ public class ScanMapper {
             results.add(toPresetDTO(preset));
         }
         return results;
+    }
+
+    public ScanTaskSummaryDTO toTaskSummary(ScanReport report) {
+        if (report == null) {
+            return null;
+        }
+        ScanTaskSummaryDTO dto = new ScanTaskSummaryDTO();
+        dto.setTaskId(report.getTaskId());
+        dto.setPresetName(report.getPresetName());
+        dto.setRepoId(report.getRepoId());
+        dto.setRepoName(report.getRepoName());
+        dto.setMode(report.getMode() != null ? report.getMode().name() : null);
+        dto.setGeneratedAt(report.getGeneratedAt());
+        dto.setTotalFiles(report.filePaths().size());
+        dto.setOverallCoverage(round(report.overallCoverage()));
+        return dto;
+    }
+
+    public List<ScanCacheEntryDTO> toCacheEntries(List<ScanSnapshot> snapshots) {
+        if (CollectionUtils.isEmpty(snapshots)) {
+            return new ArrayList<>();
+        }
+        List<ScanCacheEntryDTO> entries = new ArrayList<>(snapshots.size());
+        for (ScanSnapshot snapshot : snapshots) {
+            if (snapshot == null) {
+                continue;
+            }
+            ScanCacheEntryDTO dto = new ScanCacheEntryDTO();
+            dto.setRepoId(snapshot.getRepoId());
+            dto.setRepoName(snapshot.getRepoName());
+            dto.setTaskId(snapshot.getTaskId());
+            dto.setMode(snapshot.getMode() != null ? snapshot.getMode().name() : null);
+            dto.setPersisted(snapshot.isPersisted());
+            dto.setCachedAt(snapshot.getCachedAt());
+            dto.setResponse(snapshot.getResponse());
+            entries.add(dto);
+        }
+        return entries;
     }
 
     private ScanPresetDTO toPresetDTO(ScanPresetProperties.ScanPreset preset) {
@@ -226,56 +280,31 @@ public class ScanMapper {
         return result;
     }
 
-    private void validateDiffRequest(DiffRequestDTO request, String label) {
-        if (request == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing " + label + " repository configuration");
-        }
-        if (!StringUtils.hasText(request.getRepoPath())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, label + " repository configuration must set repoPath");
-        }
-        boolean hasBranches = StringUtils.hasText(request.getBranchFrom()) && StringUtils.hasText(request.getBranchTo());
-        boolean hasTimeRange = StringUtils.hasText(request.getTimeFrom()) || StringUtils.hasText(request.getTimeTo());
-        boolean snapshotStrategy = "SNAPSHOT".equalsIgnoreCase(request.getScanStrategy());
-        if (!hasBranches && !hasTimeRange) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, label + " repository configuration must provide branchFrom & branchTo or timeFrom/timeTo");
-        }
-        if (snapshotStrategy && !hasTimeRange) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, label + " snapshot strategy requires timeFrom/timeTo to be set");
-        }
-    }
-
-    private ScanSummaryDTO buildSummary(ScanReport report, List<DiffMatrixItemDTO> matrix) {
+    private ScanSummaryDTO buildSummary(ScanReport report, List<DiffMatrixRow> rows) {
         ScanSummaryDTO summaryDTO = new ScanSummaryDTO();
-        summaryDTO.setTotalFiles(matrix.size());
-        summaryDTO.setOracleOnly((int) matrix.stream().filter(item -> "oracle-only".equals(item.getStatus())).count());
-        summaryDTO.setGaussOnly((int) matrix.stream().filter(item -> "gauss-only".equals(item.getStatus())).count());
-        summaryDTO.setMatched((int) matrix.stream().filter(item -> "matched".equals(item.getStatus())).count());
+        summaryDTO.setTotalFiles(rows.size());
+        summaryDTO.setOracleOnly((int) rows.stream().filter(item -> "oracle-only".equals(item.getStatus())).count());
+        summaryDTO.setGaussOnly((int) rows.stream().filter(item -> "gauss-only".equals(item.getStatus())).count());
+        summaryDTO.setMatched((int) rows.stream().filter(item -> "matched".equals(item.getStatus())).count());
         double overallCoverage = resolveOverallCoverage(report);
         summaryDTO.setConsistencyRate(overallCoverage);
         summaryDTO.setOverallCoverage(overallCoverage);
         return summaryDTO;
     }
 
-    private List<DiffMatrixItemDTO> buildMatrix(ScanReport report) {
-        Map<String, DiffMatrixItemDTO> index = new HashMap<>();
-        report.filePaths().forEach(path -> index.put(path, new DiffMatrixItemDTO()));
-        for (Map.Entry<String, DiffMatrixItemDTO> entry : index.entrySet()) {
-            String path = entry.getKey();
-            DiffMatrixItemDTO item = entry.getValue();
-            item.setFilePath(path);
-            DiffFile oracleFile = report.findOracle(path).orElse(null);
-            DiffFile gaussFile = report.findGauss(path).orElse(null);
-            item.setOracleDelta(formatDelta(oracleFile));
-            item.setGaussDelta(formatDelta(gaussFile));
-            double coverage = report.findCoverage(path)
-                    .map(CoverageDetail::getCoverage)
-                    .orElse(0D);
-            item.setCoverage(round(coverage));
-            item.setStatus(resolveStatus(oracleFile, gaussFile, coverage));
-        }
-        return index.values().stream()
-                .sorted(Comparator.comparing(DiffMatrixItemDTO::getFilePath))
-                .collect(Collectors.toList());
+    private String trimToNull(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private DiffMatrixItemDTO toMatrixItem(DiffMatrixRow row) {
+        DiffMatrixItemDTO item = new DiffMatrixItemDTO();
+        item.setFilePath(row.getFilePath());
+        item.setOracleDelta(formatDelta(row.getOracleAdded(), row.getOracleRemoved()));
+        item.setGaussDelta(formatDelta(row.getGaussAdded(), row.getGaussRemoved()));
+        double coverage = row.getCoverage() == null ? 0D : round(row.getCoverage());
+        item.setCoverage(coverage);
+        item.setStatus(row.getStatus());
+        return item;
     }
 
     private DiffContentDTO buildContent(DiffFile file, boolean preferSource) {
@@ -295,44 +324,15 @@ public class ScanMapper {
     }
 
     private double resolveOverallCoverage(ScanReport report) {
-        if (report.getCoverageSummary() == null) {
-            return 0D;
-        }
-        return round(report.getCoverageSummary().getOverallCoverage());
+        return round(report.overallCoverage());
     }
 
     private double resolveCoverage(CoverageDetail detail) {
         return detail == null ? 0D : round(detail.getCoverage());
     }
 
-    private String resolveStatus(DiffFile oracleFile, DiffFile gaussFile, double coverage) {
-        boolean hasOracle = oracleFile != null && !CollectionUtils.isEmpty(oracleFile.getBlocks());
-        boolean hasGauss = gaussFile != null && !CollectionUtils.isEmpty(gaussFile.getBlocks());
-        if (hasOracle && hasGauss) {
-            if (coverage >= 0.999D) {
-                return "matched";
-            }
-            if (coverage <= 0.01D) {
-                return "pending";
-            }
-            return "partial";
-        }
-        if (hasOracle) {
-            return "oracle-only";
-        }
-        if (hasGauss) {
-            return "gauss-only";
-        }
-        return "pending";
-    }
-
-    private String formatDelta(DiffFile file) {
-        if (file == null) {
-            return "+0/-0";
-        }
-        int added = countAdded(file);
-        int removed = countRemoved(file);
-        return "+" + added + "/-" + removed;
+    private String formatDelta(int added, int removed) {
+        return "+" + Math.max(0, added) + "/-" + Math.max(0, removed);
     }
 
     private int countAdded(DiffFile file) {
@@ -340,7 +340,7 @@ public class ScanMapper {
             return 0;
         }
         return file.getBlocks().stream()
-                .mapToInt(block -> addedLines(block))
+                .mapToInt(this::addedLines)
                 .sum();
     }
 
@@ -349,7 +349,7 @@ public class ScanMapper {
             return 0;
         }
         return file.getBlocks().stream()
-                .mapToInt(block -> removedLines(block))
+                .mapToInt(this::removedLines)
                 .sum();
     }
 
@@ -365,7 +365,9 @@ public class ScanMapper {
             case ADD:
                 return safeCount(block.getStartLineTo(), block.getEndLineTo());
             case MODIFY:
-                return Math.max(safeCount(block.getStartLineTo(), block.getEndLineTo()), safeCount(block.getStartLineFrom(), block.getEndLineFrom()));
+                return Math.max(
+                        safeCount(block.getStartLineTo(), block.getEndLineTo()),
+                        safeCount(block.getStartLineFrom(), block.getEndLineFrom()));
             default:
                 return safeCount(block.getStartLineTo(), block.getEndLineTo());
         }
@@ -383,7 +385,9 @@ public class ScanMapper {
             case DELETE:
                 return safeCount(block.getStartLineFrom(), block.getEndLineFrom());
             case MODIFY:
-                return Math.max(safeCount(block.getStartLineFrom(), block.getEndLineFrom()), safeCount(block.getStartLineTo(), block.getEndLineTo()));
+                return Math.max(
+                        safeCount(block.getStartLineFrom(), block.getEndLineFrom()),
+                        safeCount(block.getStartLineTo(), block.getEndLineTo()));
             default:
                 return safeCount(block.getStartLineFrom(), block.getEndLineFrom());
         }

@@ -43,4 +43,11 @@ public class RepoIndex {
     public void sortByUpdatedAtDesc() {
         getEntries().sort(Comparator.comparing(RepoIndexEntry::getUpdatedAt, Comparator.nullsLast(Comparator.naturalOrder())).reversed());
     }
+
+    public void remove(String id) {
+        if (id == null) {
+            return;
+        }
+        getEntries().removeIf(entry -> id.equals(entry.getId()));
+    }
 }

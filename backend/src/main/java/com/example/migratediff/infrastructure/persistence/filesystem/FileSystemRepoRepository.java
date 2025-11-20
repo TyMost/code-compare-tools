@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Repository;
+import org.springframework.util.StringUtils;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -47,6 +48,7 @@ public class FileSystemRepoRepository implements RepoRepository {
         lock.writeLock().lock();
         try {
             String id = keyResolver.resolveKey(repoConfig);
+            repoConfig.setId(id);
             Path filePath = storageSupport.resolve(REPO_DIRECTORY, id + ".json");
             storageSupport.writeJson(filePath, repoConfig);
 
@@ -72,7 +74,9 @@ public class FileSystemRepoRepository implements RepoRepository {
         lock.readLock().lock();
         try {
             Path filePath = storageSupport.resolve(REPO_DIRECTORY, id + ".json");
-            return storageSupport.readJson(filePath, RepoConfig.class);
+            Optional<RepoConfig> loaded = storageSupport.readJson(filePath, RepoConfig.class);
+            loaded.ifPresent(config -> config.setId(id));
+            return loaded;
         } finally {
             lock.readLock().unlock();
         }
@@ -87,11 +91,33 @@ public class FileSystemRepoRepository implements RepoRepository {
             List<RepoConfig> result = new ArrayList<>();
             for (RepoIndexEntry entry : index.getEntries()) {
                 Path filePath = storageSupport.resolve(REPO_DIRECTORY, entry.getId() + ".json");
-                storageSupport.readJson(filePath, RepoConfig.class).ifPresent(result::add);
+                storageSupport.readJson(filePath, RepoConfig.class)
+                        .ifPresent(config -> {
+                            config.setId(entry.getId());
+                            result.add(config);
+                        });
             }
             return result;
         } finally {
             lock.readLock().unlock();
+        }
+    }
+
+    @Override
+    public void deleteById(String id) {
+        if (!StringUtils.hasText(id)) {
+            return;
+        }
+        lock.writeLock().lock();
+        try {
+            Path filePath = storageSupport.resolve(REPO_DIRECTORY, id + ".json");
+            storageSupport.deleteIfExists(filePath);
+            RepoIndex index = loadIndex();
+            index.remove(id);
+            storageSupport.writeJson(indexFilePath, index);
+            log.debug("已删除 RepoConfig: {}", id);
+        } finally {
+            lock.writeLock().unlock();
         }
     }
 

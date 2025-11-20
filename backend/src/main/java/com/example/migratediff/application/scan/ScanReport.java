@@ -4,6 +4,9 @@ import com.example.migratediff.domain.coverage.CoverageDetail;
 import com.example.migratediff.domain.coverage.CoverageSummary;
 import com.example.migratediff.domain.diff.DiffFile;
 import com.example.migratediff.domain.diff.DiffSummary;
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Getter;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -24,28 +27,76 @@ public class ScanReport {
 
     private final String taskId;
     private final ScanMode mode;
+    private final String presetName;
+    private final String repoId;
+    private final String repoName;
+    private final boolean persisted;
     private final DiffSummary oracleSummary;
     private final DiffSummary gaussSummary;
     private final CoverageSummary coverageSummary;
     private final Instant generatedAt;
+    @JsonIgnore
     private final Map<String, DiffFile> oracleIndex;
+    @JsonIgnore
     private final Map<String, DiffFile> gaussIndex;
+    @JsonIgnore
     private final Map<String, CoverageDetail> coverageIndex;
 
     public ScanReport(String taskId,
                       ScanMode mode,
+                      String presetName,
+                      String repoId,
+                      String repoName,
+                      boolean persisted,
                       DiffSummary oracleSummary,
                       DiffSummary gaussSummary,
                       CoverageSummary coverageSummary) {
+        this(taskId,
+                mode,
+                presetName,
+                repoId,
+                repoName,
+                persisted,
+                oracleSummary,
+                gaussSummary,
+                coverageSummary,
+                null);
+    }
+
+    @JsonCreator
+    public ScanReport(@JsonProperty("taskId") String taskId,
+                      @JsonProperty("mode") ScanMode mode,
+                      @JsonProperty("presetName") String presetName,
+                      @JsonProperty("repoId") String repoId,
+                      @JsonProperty("repoName") String repoName,
+                      @JsonProperty("persisted") boolean persisted,
+                      @JsonProperty("oracleSummary") DiffSummary oracleSummary,
+                      @JsonProperty("gaussSummary") DiffSummary gaussSummary,
+                      @JsonProperty("coverageSummary") CoverageSummary coverageSummary,
+                      @JsonProperty("generatedAt") Instant generatedAt) {
         this.taskId = StringUtils.hasText(taskId) ? taskId : UUIDGenerator.randomTaskId();
         this.mode = mode;
+        this.presetName = presetName;
+        this.repoId = repoId;
+        this.repoName = repoName;
+        this.persisted = persisted;
         this.oracleSummary = oracleSummary;
         this.gaussSummary = gaussSummary;
         this.coverageSummary = coverageSummary;
-        this.generatedAt = Instant.now();
+        this.generatedAt = generatedAt != null ? generatedAt : Instant.now();
         this.oracleIndex = indexByPath(oracleSummary);
         this.gaussIndex = indexByPath(gaussSummary);
         this.coverageIndex = indexCoverage(coverageSummary);
+    }
+
+    /**
+     * 返回整体迁移覆盖率（0~1）。
+     */
+    public double overallCoverage() {
+        if (coverageSummary == null) {
+            return 0D;
+        }
+        return coverageSummary.getOverallCoverage();
     }
 
     public Set<String> filePaths() {

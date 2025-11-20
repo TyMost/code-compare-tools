@@ -12,6 +12,16 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class RepoConfig {
 
+    /**
+     * Stable identifier used when persisting or referencing the repository configuration.
+     */
+    private String id;
+
+    /**
+     * Optional friendly name shown on the UI.
+     */
+    private String name;
+
     private RepoPath repoPath;
     private RepoBranch branchFrom;
     private RepoBranch branchTo;

@@ -143,29 +143,18 @@ export default {
     this.ensureCurrentFile(true);
   },
   methods: {
-    ...mapActions('diff', [
-      'scanFull',
-      'fetchDetail',
-      'generateMigration',
-      'applyMigration',
-      'revertMigration',
-    ]),
+    ...mapActions('diff', ['fetchDetail', 'generateMigration', 'applyMigration', 'revertMigration']),
     ...mapMutations('diff', ['setDiffMode', 'setTaskId']),
     async ensureCurrentFile(force = false) {
       if (this.loadingMatrix && !force) {
         return;
       }
-      if (!this.storeTaskId) {
+      if (!this.storeTaskId || !this.diffMatrix.length) {
+        if (!this.diffMatrix.length && !force) {
+          this.$message.info('暂无缓存结果，请先在仪表盘执行全量扫描');
+        }
         this.initialized = false;
         return;
-      }
-      if (!this.diffMatrix.length) {
-        try {
-          await this.scanFull({ taskId: this.storeTaskId, persistResult: true });
-        } catch (error) {
-          this.$message.error(error.message || '刷新差异矩阵失败');
-          return;
-        }
       }
       const fallback = this.diffMatrix.length > 0 ? this.diffMatrix[0].filePath : '';
       const targetPath = this.filePath || this.currentFile.filePath || fallback;
