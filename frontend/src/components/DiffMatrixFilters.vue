@@ -25,6 +25,31 @@
     </div>
 
     <div class="diff-matrix-filters__section">
+      <div class="diff-matrix-filters__label">文件类型</div>
+      <el-select
+        v-model="localFilters.fileExtensions"
+        placeholder="全部文件类型"
+        size="mini"
+        multiple
+        collapse-tags
+        filterable
+        :max-collapse-tags="3"
+      >
+        <el-option
+          v-for="ext in availableExtensions"
+          :key="ext"
+          :label="ext"
+          :value="ext"
+        >
+          <span style="float: left">{{ ext }}</span>
+          <span style="float: right; color: #8492a6; font-size: 12px">
+            {{ getFileCount(ext) }} 个文件
+          </span>
+        </el-option>
+      </el-select>
+    </div>
+
+    <div class="diff-matrix-filters__section">
       <div class="diff-matrix-filters__label">覆盖率</div>
       <div class="diff-matrix-filters__slider">
         <el-slider
@@ -79,6 +104,14 @@ export default {
       type: Object,
       default: () => ({}),
     },
+    availableExtensions: {
+      type: Array,
+      default: () => [],
+    },
+    originalData: {
+      type: Array,
+      default: () => [],
+    },
   },
   data() {
     return {
@@ -98,11 +131,13 @@ export default {
         incoming.includeEmptyCoverage === undefined
           ? true
           : !!incoming.includeEmptyCoverage;
+      const fileExtensions = Array.isArray(incoming.fileExtensions) ? incoming.fileExtensions : [];
       return (
         statuses.length > 0 ||
         Number(min) > 0 ||
         Number(max) < 1 ||
-        includeEmpty === false
+        includeEmpty === false ||
+        fileExtensions.length > 0
       );
     },
   },
@@ -134,10 +169,12 @@ export default {
               return Math.round(bounded * 100);
             })
           : [0, 100];
+      const fileExtensions = Array.isArray(source.fileExtensions) ? [...source.fileExtensions] : [];
       return {
         statuses,
         coverageRange,
         includeEmptyCoverage: includeEmpty,
+        fileExtensions,
       };
     },
     applyFilters() {
@@ -155,8 +192,18 @@ export default {
           : [],
         coverageRange: normalizedRange,
         includeEmptyCoverage: this.localFilters.includeEmptyCoverage,
+        fileExtensions: Array.isArray(this.localFilters.fileExtensions)
+          ? [...this.localFilters.fileExtensions]
+          : [],
       });
       this.visible = false;
+    },
+    getFileCount(extension) {
+      if (!Array.isArray(this.originalData) || !extension) return 0;
+      return this.originalData.filter(item => {
+        const fileExt = item.filePath.split('.').pop();
+        return fileExt ? `.${fileExt.toLowerCase()}` === extension.toLowerCase() : false;
+      }).length;
     },
     handleReset() {
       this.$emit('reset');

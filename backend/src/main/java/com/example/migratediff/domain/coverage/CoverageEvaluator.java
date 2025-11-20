@@ -154,9 +154,46 @@ public class CoverageEvaluator {
     }
 
     private double blockSimilarity(DiffBlock origin, DiffBlock target) {
-        List<String> originTokens = CoverageUtils.tokenize(resolveContent(origin, true));
-        List<String> targetTokens = CoverageUtils.tokenize(resolveContent(target, false));
-        return CoverageUtils.recallSimilarity(originTokens, targetTokens);
+
+        // --- Normalize content ---
+        String oFromStr = normalize(origin.getContentFrom());
+        String oToStr   = normalize(origin.getContentTo());
+        String tFromStr = normalize(target.getContentFrom());
+        String tToStr   = normalize(target.getContentTo());
+
+        // --- Tokenize once (性能优化的关键部分) ---
+        List<String> oFrom = tokenizeIfNotEmpty(oFromStr);
+        List<String> oTo   = tokenizeIfNotEmpty(oToStr);
+        List<String> tFrom = tokenizeIfNotEmpty(tFromStr);
+        List<String> tTo   = tokenizeIfNotEmpty(tToStr);
+
+        // --- Weighted 4-way similarity ---
+        return max(
+            score(oFrom, tFrom, 1.0),  // 删除同源
+            score(oTo,   tTo,   1.0),  // 添加同源
+            score(oFrom, tTo,   0.3),  // cross
+            score(oTo,   tFrom, 0.3)   // cross
+        );
+    }
+
+    private List<String> tokenizeIfNotEmpty(String s) {
+        if (s == null || s.isEmpty()) return null;
+        return CoverageUtils.tokenize(s);
+    }
+
+    private double score(List<String> a, List<String> b, double weight) {
+        if (a == null || b == null) return 0;
+        return CoverageUtils.recallSimilarity(a, b) * weight;
+    }
+
+    private String normalize(String s) {
+        return (s == null) ? "" : s.trim();
+    }
+
+    private double max(double... xs) {
+        double m = 0;
+        for (double x : xs) if (x > m) m = x;
+        return m;
     }
 
     private String resolveContent(DiffBlock block, boolean preferSource) {

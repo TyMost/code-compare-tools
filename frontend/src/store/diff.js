@@ -41,6 +41,7 @@ const defaultMatrixFilters = () => ({
   statuses: [],
   coverageRange: [0, 1],
   includeEmptyCoverage: true,
+  fileExtensions: [],
 });
 
 const defaultCurrentFile = () => ({
@@ -75,6 +76,7 @@ function buildExportFilters(source = {}) {
     coverageRange: sanitizeCoverageRange(source.coverageRange),
     includeEmptyCoverage:
       source.includeEmptyCoverage === undefined ? true : !!source.includeEmptyCoverage,
+    fileExtensions: Array.isArray(source.fileExtensions) ? [...source.fileExtensions] : [],
   };
 }
 
@@ -295,6 +297,9 @@ export default {
           payload.includeEmptyCoverage === undefined
             ? state.matrixFilters.includeEmptyCoverage
             : !!payload.includeEmptyCoverage,
+        fileExtensions: Array.isArray(payload.fileExtensions) 
+          ? [...payload.fileExtensions] 
+          : state.matrixFilters.fileExtensions,
       };
     },
     resetMatrixFilters(state) {
@@ -370,12 +375,23 @@ export default {
         filters.includeEmptyCoverage === undefined
           ? true
           : !!filters.includeEmptyCoverage;
+      const fileExtensions = Array.isArray(filters.fileExtensions) ? filters.fileExtensions : [];
       const [min = 0, max = 1] = coverageRange;
       return state.diffMatrix.filter((item) => {
         const statusMatches = !statuses.length || statuses.includes(item.status);
         if (!statusMatches) {
           return false;
         }
+        
+        // 文件扩展名筛选
+        if (fileExtensions.length > 0) {
+          const fileExt = item.filePath.split('.').pop();
+          const normalizedExt = fileExt ? `.${fileExt.toLowerCase()}` : '';
+          if (!fileExtensions.includes(normalizedExt)) {
+            return false;
+          }
+        }
+        
         const value = item.coverage;
         if (value === undefined || value === null || value === '') {
           return includeEmpty;
@@ -390,6 +406,22 @@ export default {
         const upper = Number.isNaN(normalizedMax) ? 1 : normalizedMax;
         return numeric >= lower && numeric <= upper;
       });
+    },
+    availableFileExtensions(state) {
+      const extensions = new Set();
+      state.diffMatrix.forEach(item => {
+        if (item.filePath && typeof item.filePath === 'string') {
+          const parts = item.filePath.split('.');
+          if (parts.length > 1) {
+            const ext = parts.pop().toLowerCase();
+            // 过滤异常长的扩展名和无意义扩展名
+            if (ext && ext.length <= 10 && ext.length >= 1) {
+              extensions.add(`.${ext}`);
+            }
+          }
+        }
+      });
+      return Array.from(extensions).sort();
     },
   },
   actions: {

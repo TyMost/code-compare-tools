@@ -158,6 +158,8 @@
       <template #actions>
         <diff-matrix-filters
           :filters="matrixFilters"
+          :available-extensions="availableFileExtensions"
+          :original-data="diffMatrix"
           @change="handleFilterChange"
           @reset="handleFilterReset"
         />
@@ -204,9 +206,11 @@ export default {
       'loadingSnapshots',
       'activeRepoId',
       'profileBundleMeta',
+      'diffMatrix',
     ]),
     ...mapGetters('diff', {
       displayedDiffMatrix: 'filteredDiffMatrix',
+      availableFileExtensions: 'availableFileExtensions',
     }),
     profileBundleDescription() {
       const meta = this.profileBundleMeta || {};

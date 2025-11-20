@@ -10,6 +10,8 @@ import org.eclipse.jgit.revwalk.RevSort;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -18,13 +20,37 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Component
 public class SnapshotLocator {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(SnapshotLocator.class);
 
+    private final RevWalkPool revWalkPool;
+    private final boolean enableParallelProcessing;
+    private final int maxConcurrentRefs;
+    private final ExecutorService executorService;
+
+    @Autowired
+    public SnapshotLocator(RevWalkPool revWalkPool,
+                          @Value("${migratediff.performance.parallel-ref-processing:true}") boolean enableParallelProcessing,
+                          @Value("${migratediff.performance.max-concurrent-refs:8}") int maxConcurrentRefs) {
+        this.revWalkPool = revWalkPool;
+        this.enableParallelProcessing = enableParallelProcessing;
+        this.maxConcurrentRefs = maxConcurrentRefs;
+        this.executorService = enableParallelProcessing ? 
+            Executors.newFixedThreadPool(maxConcurrentRefs, new NamedThreadFactory("snapshot-locator")) : null;
+    }
+
     public SnapshotPair locate(Repository repository, Instant startTime, Instant endTime, SnapshotLocatorOptions options) throws IOException {
+        long startTimeMs = System.currentTimeMillis();
+        
         if (repository == null) {
             throw new IllegalArgumentException("Repository is required");
         }
@@ -34,50 +60,199 @@ public class SnapshotLocator {
         if (startTime.isAfter(endTime)) {
             throw new IllegalArgumentException("startTime must not be after endTime");
         }
+        
         SnapshotLocatorOptions effectiveOptions = options != null ? options : SnapshotLocatorOptions.builder().build();
         List<Ref> refs = collectRefs(repository, effectiveOptions);
         if (refs.isEmpty()) {
             throw new IllegalStateException("No refs available for snapshot scan");
         }
-        ObjectId earliestId = null;
-        ObjectId latestId = null;
-        Instant earliestInstant = null;
-        Instant latestInstant = null;
+
+        LOGGER.info("Starting snapshot locator for {} refs, time range: {} to {}", refs.size(), startTime, endTime);
+        
+        SnapshotPair result;
+        if (enableParallelProcessing && refs.size() > 1) {
+            result = locateParallel(repository, refs, startTime, endTime, effectiveOptions);
+        } else {
+            result = locateSequential(repository, refs, startTime, endTime, effectiveOptions);
+        }
+
+        long duration = System.currentTimeMillis() - startTimeMs;
+        LOGGER.info("Snapshot locator completed in {}ms, found earliest={}, latest={}", 
+            duration, result.getEarliestInstant(), result.getLatestInstant());
+        
+        return result;
+    }
+
+    /**
+     * 并行处理多个引用，提升大仓库扫描性能
+     */
+    private SnapshotPair locateParallel(Repository repository, List<Ref> refs, Instant startTime, Instant endTime, SnapshotLocatorOptions options) {
+        AtomicReference<SnapshotCandidate> earliestCandidate = new AtomicReference<>();
+        AtomicReference<SnapshotCandidate> latestCandidate = new AtomicReference<>();
+        AtomicReference<Exception> exceptionHolder = new AtomicReference<>();
+
+        // 分批处理引用，避免同时处理过多
+        int batchSize = Math.min(maxConcurrentRefs, refs.size());
+        List<List<Ref>> batches = partitionList(refs, batchSize);
+
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        for (List<Ref> batch : batches) {
+            CompletableFuture<Void> batchFuture = CompletableFuture.runAsync(() -> {
+                for (Ref ref : batch) {
+                    if (exceptionHolder.get() != null) {
+                        break; // 如果已经有异常，停止处理
+                    }
+                    
+                    if (ref == null || ref.getObjectId() == null) {
+                        continue;
+                    }
+
+                    try {
+                        processRef(repository, ref, startTime, endTime, earliestCandidate, latestCandidate);
+                    } catch (Exception ex) {
+                        exceptionHolder.compareAndSet(null, ex);
+                        LOGGER.error("Error processing ref {}: {}", ref.getName(), ex.getMessage(), ex);
+                    }
+                }
+            }, executorService);
+            
+            futures.add(batchFuture);
+        }
+
+        // 等待所有任务完成
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+        Exception exception = exceptionHolder.get();
+        if (exception != null) {
+            throw new RuntimeException("Parallel snapshot locator failed", exception);
+        }
+
+        SnapshotCandidate earliest = earliestCandidate.get();
+        SnapshotCandidate latest = latestCandidate.get();
+        
+        if (earliest == null || latest == null) {
+            throw new IllegalStateException("No commits found in the requested time range");
+        }
+
+        return new SnapshotPair(earliest.getObjectId(), earliest.getInstant(), latest.getObjectId(), latest.getInstant());
+    }
+
+    /**
+     * 顺序处理引用，用于小数量引用或并行处理被禁用的情况
+     */
+    private SnapshotPair locateSequential(Repository repository, List<Ref> refs, Instant startTime, Instant endTime, SnapshotLocatorOptions options) throws IOException {
+        AtomicReference<SnapshotCandidate> earliestCandidate = new AtomicReference<>();
+        AtomicReference<SnapshotCandidate> latestCandidate = new AtomicReference<>();
         int scannedRefs = 0;
+
         for (Ref ref : refs) {
             if (ref == null || ref.getObjectId() == null) {
                 continue;
             }
+            
             scannedRefs++;
-            try (RevWalk revWalk = new RevWalk(repository)) {
-                revWalk.sort(RevSort.COMMIT_TIME_DESC, true);
-                revWalk.markStart(revWalk.parseCommit(ref.getObjectId()));
-                for (RevCommit commit : revWalk) {
-                    Instant commitInstant = Instant.ofEpochSecond(commit.getCommitTime());
-                    if (commitInstant.isAfter(endTime)) {
-                        continue;
-                    }
-                    if (commitInstant.isBefore(startTime)) {
-                        break;
-                    }
-                    if (latestInstant == null || commitInstant.isAfter(latestInstant)) {
-                        latestInstant = commitInstant;
-                        latestId = commit.getId().copy();
-                        LOGGER.debug("Snapshot latest candidate updated: ref={}, commit={}, time={}", ref.getName(), latestId.name(), latestInstant);
-                    }
-                    if (earliestInstant == null || commitInstant.isBefore(earliestInstant)) {
-                        earliestInstant = commitInstant;
-                        earliestId = commit.getId().copy();
-                        LOGGER.debug("Snapshot earliest candidate updated: ref={}, commit={}, time={}", ref.getName(), earliestId.name(), earliestInstant);
-                    }
+            processRef(repository, ref, startTime, endTime, earliestCandidate, latestCandidate);
+        }
+
+        SnapshotCandidate earliest = earliestCandidate.get();
+        SnapshotCandidate latest = latestCandidate.get();
+        
+        if (earliest == null || latest == null) {
+            throw new IllegalStateException("No commits found in the requested time range after scanning " + scannedRefs + " refs");
+        }
+
+        LOGGER.debug("Sequential snapshot locator scanned {} refs; earliest={}, latest={}", 
+            scannedRefs, earliest.getInstant(), latest.getInstant());
+        
+        return new SnapshotPair(earliest.getObjectId(), earliest.getInstant(), latest.getObjectId(), latest.getInstant());
+    }
+
+    /**
+     * 处理单个引用，查找时间范围内的提交
+     */
+    private void processRef(Repository repository, Ref ref, Instant startTime, Instant endTime,
+                           AtomicReference<SnapshotCandidate> earliestCandidate,
+                           AtomicReference<SnapshotCandidate> latestCandidate) throws IOException {
+        
+        RevWalk revWalk = null;
+        try {
+            revWalk = revWalkPool.borrowRevWalk(repository);
+            revWalk.sort(RevSort.COMMIT_TIME_DESC, true);
+            revWalk.markStart(revWalk.parseCommit(ref.getObjectId()));
+
+            int processedCommits = 0;
+            RevCommit commit;
+            
+            while ((commit = revWalk.next()) != null) {
+                processedCommits++;
+                Instant commitInstant = Instant.ofEpochSecond(commit.getCommitTime());
+                
+                // 优化：如果提交时间早于开始时间，且我们已经在寻找最早提交，可以提前退出
+                if (commitInstant.isBefore(startTime)) {
+                    break;
                 }
+                
+                // 跳过时间窗口之后的提交
+                if (commitInstant.isAfter(endTime)) {
+                    continue;
+                }
+
+                // 更新最新提交候选
+                updateLatestCandidate(latestCandidate, commit, commitInstant, ref.getName());
+                
+                // 更新最早提交候选
+                updateEarliestCandidate(earliestCandidate, commit, commitInstant, ref.getName());
+            }
+
+            if (processedCommits > 0) {
+                LOGGER.debug("Processed {} commits for ref {}, found candidates in time range", processedCommits, ref.getName());
+            }
+            
+        } finally {
+            if (revWalk != null) {
+                revWalkPool.returnRevWalk(revWalk);
             }
         }
-        if (earliestId == null || latestId == null) {
-            throw new IllegalStateException("No commits found in the requested time range");
+    }
+
+    /**
+     * 更新最新提交候选
+     */
+    private void updateLatestCandidate(AtomicReference<SnapshotCandidate> current, RevCommit commit, Instant commitInstant, String refName) {
+        SnapshotCandidate candidate = new SnapshotCandidate(commit.getId(), commitInstant, refName);
+        current.updateAndGet(existing -> {
+            if (existing == null || commitInstant.isAfter(existing.getInstant())) {
+                LOGGER.debug("Latest candidate updated: ref={}, commit={}, time={}", refName, commit.getId().name(), commitInstant);
+                return candidate;
+            }
+            return existing;
+        });
+    }
+
+    /**
+     * 更新最早提交候选
+     */
+    private void updateEarliestCandidate(AtomicReference<SnapshotCandidate> current, RevCommit commit, Instant commitInstant, String refName) {
+        SnapshotCandidate candidate = new SnapshotCandidate(commit.getId(), commitInstant, refName);
+        current.updateAndGet(existing -> {
+            if (existing == null || commitInstant.isBefore(existing.getInstant())) {
+                LOGGER.debug("Earliest candidate updated: ref={}, commit={}, time={}", refName, commit.getId().name(), commitInstant);
+                return candidate;
+            }
+            return existing;
+        });
+    }
+
+    /**
+     * 将列表分割成指定大小的批次
+     */
+    private <T> List<List<T>> partitionList(List<T> list, int batchSize) {
+        List<List<T>> batches = new ArrayList<>();
+        for (int i = 0; i < list.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, list.size());
+            batches.add(list.subList(i, end));
         }
-        LOGGER.debug("Snapshot locator scanned {} refs; earliest={}, latest={}", scannedRefs, earliestInstant, latestInstant);
-        return new SnapshotPair(earliestId, earliestInstant, latestId, latestInstant);
+        return batches;
     }
 
     private List<Ref> collectRefs(Repository repository, SnapshotLocatorOptions options) throws IOException {

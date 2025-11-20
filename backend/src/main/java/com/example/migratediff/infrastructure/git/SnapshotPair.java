@@ -37,4 +37,18 @@ public class SnapshotPair {
     public Instant getLatestCommitTime() {
         return latestCommitTime;
     }
+
+    /**
+     * 兼容性方法，返回最早提交时间
+     */
+    public Instant getEarliestInstant() {
+        return earliestCommitTime;
+    }
+
+    /**
+     * 兼容性方法，返回最新提交时间
+     */
+    public Instant getLatestInstant() {
+        return latestCommitTime;
+    }
 }

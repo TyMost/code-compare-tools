@@ -16,6 +16,7 @@ import org.eclipse.jgit.treewalk.EmptyTreeIterator;
 import org.eclipse.jgit.treewalk.FileTreeIterator;
 import org.eclipse.jgit.util.io.DisabledOutputStream;
 import org.eclipse.jgit.diff.DiffFormatter;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
@@ -24,25 +25,55 @@ import java.io.IOException;
 
 /**
  * Common Git repository utilities shared by diff scanners.
+ * 集成了RepositoryPool和RevWalkPool以提升性能
  */
 @Component
 public class GitRepositoryHelper {
 
+    private final RepositoryPool repositoryPool;
+    private final RevWalkPool revWalkPool;
+
+    @Autowired
+    public GitRepositoryHelper(RepositoryPool repositoryPool, RevWalkPool revWalkPool) {
+        this.repositoryPool = repositoryPool;
+        this.revWalkPool = revWalkPool;
+    }
+
     public Repository openRepository(RepoConfig repoConfig) throws IOException {
-        File repoDirectory = new File(repoConfig.getRepoPath().getAbsolutePath());
-        FileRepositoryBuilder builder = new FileRepositoryBuilder()
-                .readEnvironment()
-                .setMustExist(true)
-                .findGitDir(repoDirectory);
-        if (builder.getGitDir() == null) {
-            File gitDirCandidate = new File(repoDirectory, Constants.DOT_GIT);
-            if (gitDirCandidate.isDirectory()) {
-                builder.setGitDir(gitDirCandidate);
-            } else {
-                builder.setGitDir(repoDirectory);
+        if (repoConfig == null || repoConfig.getRepoPath() == null) {
+            throw new IllegalArgumentException("RepoConfig and repo path cannot be null");
+        }
+        String repoPath = repoConfig.getRepoPath().getAbsolutePath();
+        return repositoryPool.borrowRepository(repoPath);
+    }
+
+    /**
+     * 归还Repository实例到池中
+     */
+    public void returnRepository(RepoConfig repoConfig, Repository repository) {
+        if (repoConfig != null && repoConfig.getRepoPath() != null) {
+            String repoPath = repoConfig.getRepoPath().getAbsolutePath();
+            repositoryPool.returnRepository(repoPath, repository);
+        } else {
+            // 如果无法确定路径，直接关闭
+            if (repository != null) {
+                repository.close();
             }
         }
-        return builder.build();
+    }
+
+    /**
+     * 借用RevWalk实例
+     */
+    public RevWalk borrowRevWalk(Repository repository) {
+        return revWalkPool.borrowRevWalk(repository);
+    }
+
+    /**
+     * 归还RevWalk实例到池中
+     */
+    public void returnRevWalk(RevWalk revWalk) {
+        revWalkPool.returnRevWalk(revWalk);
     }
 
     public DiffFormatter createDiffFormatter(Repository repository) {
