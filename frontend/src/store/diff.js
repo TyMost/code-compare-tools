@@ -6,6 +6,7 @@ import {
   fetchScanCache as fetchScanCacheRequest,
   clearScanCache as clearScanCacheRequest,
 } from '../api/diff';
+import commitApi from '../api/commit';
 import {
   generateMigration as generateMigrationRequest,
   applyMigration as applyMigrationRequest,
@@ -58,6 +59,18 @@ const defaultCurrentFile = () => ({
   },
   migrationDiff: '',
   stats: defaultStats(),
+  commitHistory: null,
+});
+
+const defaultCommitHistory = () => ({
+  filePath: '',
+  oracleCommits: [],
+  gaussCommits: [],
+  totalCount: 0,
+  oracleCount: 0,
+  gaussCount: 0,
+  hasOracleCommits: false,
+  hasGaussCommits: false,
 });
 
 function sanitizeCoverageRange(range) {
@@ -257,6 +270,7 @@ export default {
     currentFile: defaultCurrentFile(),
     loadingMatrix: false,
     loadingDetail: false,
+    loadingCommitHistory: false,
     migrating: false,
     diffMode: 'deltaO',
     availableTasks: [],
@@ -359,6 +373,12 @@ export default {
         version: next.version || '',
         generatedAt: next.generatedAt || '',
       };
+    },
+    setCommitHistory(state, commitHistory) {
+      state.currentFile.commitHistory = commitHistory || null;
+    },
+    setLoadingCommitHistory(state, flag) {
+      state.loadingCommitHistory = flag;
     },
   },
   getters: {
@@ -733,6 +753,35 @@ export default {
         return filename;
       } finally {
         commit('setExportingReport', false);
+      }
+    },
+    async fetchCommitHistory({ state, commit }, { filePath, taskId } = {}) {
+      const targetFilePath = filePath || state.currentFile.filePath;
+      if (!targetFilePath) {
+        throw new Error('缺少文件路径');
+      }
+      const effectiveTaskId = taskId || state.taskId;
+      if (!effectiveTaskId) {
+        throw new Error('缺少 taskId，请先执行扫描');
+      }
+      commit('setLoadingCommitHistory', true);
+      try {
+        const response = await commitApi.getFileCommitHistory({
+          taskId: effectiveTaskId,
+          filePath: targetFilePath,
+        });
+        const commitHistory = commitApi.parseCommitHistory(response.data);
+        commit('setCommitHistory', commitHistory);
+        return commitHistory;
+      } catch (error) {
+        console.warn('获取提交历史失败:', error);
+        // 失败时设置空的提交历史
+        const emptyCommitHistory = defaultCommitHistory();
+        emptyCommitHistory.filePath = targetFilePath;
+        commit('setCommitHistory', emptyCommitHistory);
+        return emptyCommitHistory;
+      } finally {
+        commit('setLoadingCommitHistory', false);
       }
     },
   },

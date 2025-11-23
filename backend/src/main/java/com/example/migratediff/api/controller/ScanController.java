@@ -2,11 +2,13 @@ package com.example.migratediff.api.controller;
 
 import com.example.migratediff.api.dto.ApiResponse;
 import com.example.migratediff.api.dto.DiffDetailRequestDTO;
+import com.example.migratediff.api.dto.FileCommitHistoryDTO;
 import com.example.migratediff.api.dto.MultiRepoExportRequestDTO;
 import com.example.migratediff.api.dto.ScanRequestDTO;
 import com.example.migratediff.api.dto.ScanResponseDTO;
 import com.example.migratediff.api.dto.ScanTaskSummaryDTO;
 import com.example.migratediff.api.mapper.ScanMapper;
+import com.example.migratediff.application.commit.GitCommitHistoryService;
 import com.example.migratediff.application.scan.CsvMultiRepoReportWriter;
 import com.example.migratediff.application.scan.DiffDetail;
 import com.example.migratediff.application.scan.DiffMatrixFilterCriteria;
@@ -35,9 +37,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
-
+import lombok.extern.slf4j.Slf4j;
 import javax.validation.Valid;
+
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.stream.Collectors;
@@ -45,6 +49,7 @@ import java.util.stream.Collectors;
 @RestController
 @Validated
 @RequestMapping("/api/scan")
+@Slf4j
 public class ScanController {
 
     private static final DateTimeFormatter FILE_NAME_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
@@ -58,6 +63,7 @@ public class ScanController {
     private final MultiRepoExportService multiRepoExportService;
     private final CsvMultiRepoReportWriter csvReportWriter;
     private final ScanSnapshotService scanSnapshotService;
+    private final GitCommitHistoryService gitCommitHistoryService;
 
     public ScanController(ScanAppService scanAppService,
                           ScanMapper scanMapper,
@@ -65,7 +71,8 @@ public class ScanController {
                            ScanResultStore scanResultStore,
                            MultiRepoExportService multiRepoExportService,
                            CsvMultiRepoReportWriter csvReportWriter,
-                           ScanSnapshotService scanSnapshotService) {
+                           ScanSnapshotService scanSnapshotService,
+                           GitCommitHistoryService gitCommitHistoryService) {
         this.scanAppService = scanAppService;
         this.scanMapper = scanMapper;
         this.presetProperties = presetProperties;
@@ -73,6 +80,7 @@ public class ScanController {
         this.multiRepoExportService = multiRepoExportService;
         this.csvReportWriter = csvReportWriter;
         this.scanSnapshotService = scanSnapshotService;
+        this.gitCommitHistoryService = gitCommitHistoryService;
     }
 
     @PostMapping("/full")
@@ -97,6 +105,36 @@ public class ScanController {
                 .orElseThrow(() -> new NotFoundException("Failed to locate scan record for file: " + requestDTO.getFilePath()));
         String migrationDiff = scanAppService.generateMigrationTemplate(detail);
         return ApiResponse.success(scanMapper.toDetailResponse(detail, migrationDiff));
+    }
+
+    @PostMapping("/commit-history")
+    public ApiResponse<?> getCommitHistory(@Valid @RequestBody DiffDetailRequestDTO requestDTO) {
+        try {
+            // 从扫描报告中获取仓库配置
+            ScanReport report = scanResultStore.find(requestDTO.getTaskId())
+                    .orElseThrow(() -> new NotFoundException("Scan report not found for task: " + requestDTO.getTaskId()));
+            
+            FileCommitHistoryDTO commitHistory = gitCommitHistoryService.getFileCommitHistory(
+                requestDTO.getFilePath(),
+                report.getOracleSummary() != null ? report.getOracleSummary().getRepoConfig() : null,
+                report.getGaussSummary() != null ? report.getGaussSummary().getRepoConfig() : null
+            );
+            
+            return ApiResponse.success(commitHistory);
+        } catch (Exception e) {
+            log.error("Failed to get commit history for file: {} in task: {}", requestDTO.getFilePath(), requestDTO.getTaskId(), e);
+            // 如果获取提交历史失败，返回空结果而不是错误
+            return ApiResponse.success(FileCommitHistoryDTO.builder()
+                    .filePath(requestDTO.getFilePath())
+                    .oracleCommits(new ArrayList<>())
+                    .gaussCommits(new ArrayList<>())
+                    .totalCount(0)
+                    .oracleCount(0)
+                    .gaussCount(0)
+                    .hasOracleCommits(false)
+                    .hasGaussCommits(false)
+                    .build());
+        }
     }
 
     @GetMapping("/presets")
@@ -128,7 +166,7 @@ public class ScanController {
     public ResponseEntity<ByteArrayResource> exportAggregated(@Valid @RequestBody MultiRepoExportRequestDTO requestDTO) {
         MultiRepoExportRequest request = toExportRequest(requestDTO);
         if (!"csv".equals(request.getFormat())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "目前仅支�?CSV 格式导出");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "目前仅支?CSV 格式导出");
         }
         MultiRepoExportResult result = multiRepoExportService.export(request);
         byte[] bytes = csvReportWriter.write(result);

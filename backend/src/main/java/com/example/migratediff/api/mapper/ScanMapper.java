@@ -5,6 +5,7 @@ import com.example.migratediff.api.dto.DiffDetailResponseDTO;
 import com.example.migratediff.api.dto.DiffMatrixItemDTO;
 import com.example.migratediff.api.dto.DiffRequestDTO;
 import com.example.migratediff.api.dto.DiffStatsDTO;
+import com.example.migratediff.api.dto.FileCommitHistoryDTO;
 import com.example.migratediff.api.dto.ScanCacheEntryDTO;
 import com.example.migratediff.api.dto.ScanPresetDTO;
 import com.example.migratediff.api.dto.ScanRequestDTO;
@@ -12,6 +13,7 @@ import com.example.migratediff.api.dto.ScanResponseDTO;
 import com.example.migratediff.api.dto.ScanSummaryDTO;
 import com.example.migratediff.api.dto.ScanTaskSummaryDTO;
 import com.example.migratediff.api.validation.DiffRequestValidator;
+import com.example.migratediff.application.commit.GitCommitHistoryService;
 import com.example.migratediff.application.scan.DiffDetail;
 import com.example.migratediff.application.scan.DiffMatrixAssembler;
 import com.example.migratediff.application.scan.DiffMatrixRow;
@@ -47,15 +49,18 @@ public class ScanMapper {
     private final ScanPresetProperties presetProperties;
     private final DiffMatrixAssembler diffMatrixAssembler;
     private final DiffRequestValidator diffRequestValidator;
+    private final GitCommitHistoryService gitCommitHistoryService;
 
     public ScanMapper(DiffMapper diffMapper,
                       ScanPresetProperties presetProperties,
                       DiffMatrixAssembler diffMatrixAssembler,
-                      DiffRequestValidator diffRequestValidator) {
+                      DiffRequestValidator diffRequestValidator,
+                      GitCommitHistoryService gitCommitHistoryService) {
         this.diffMapper = diffMapper;
         this.presetProperties = presetProperties;
         this.diffMatrixAssembler = diffMatrixAssembler;
         this.diffRequestValidator = diffRequestValidator;
+        this.gitCommitHistoryService = gitCommitHistoryService;
     }
 
     public ScanInput toInput(ScanRequestDTO requestDTO, ScanMode mode) {
@@ -104,6 +109,10 @@ public class ScanMapper {
         responseDTO.setMigrationDiff(migrationDiff);
         responseDTO.setStats(buildStats(detail));
         responseDTO.setCoverage(resolveCoverage(detail.getCoverageDetail()));
+        
+        // 提交历史信息暂时设置为null，需要在ScanController中通过其他方式获取
+        responseDTO.setCommitHistory(null);
+        
         return responseDTO;
     }
 

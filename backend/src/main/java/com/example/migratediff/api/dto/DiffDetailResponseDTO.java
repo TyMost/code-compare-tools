@@ -12,4 +12,9 @@ public class DiffDetailResponseDTO {
     private String migrationDiff;
     private DiffStatsDTO stats;
     private double coverage;
+    
+    /**
+     * 文件提交历史信息
+     */
+    private FileCommitHistoryDTO commitHistory;
 }
