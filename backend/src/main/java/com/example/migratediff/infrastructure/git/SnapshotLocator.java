@@ -1,5 +1,8 @@
 package com.example.migratediff.infrastructure.git;
 
+import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.errors.MissingObjectException;
+import org.eclipse.jgit.errors.RevisionSyntaxException;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
@@ -208,11 +211,40 @@ public class SnapshotLocator {
                 LOGGER.debug("Processed {} commits for ref {}, found candidates in time range", processedCommits, ref.getName());
             }
             
+        } catch (MissingObjectException ex) {
+            // 修复 JGit MissingObjectException: 优雅处理缺失的 Git 对象
+            handleMissingObjectException(ex, ref);
+            // 不抛出异常，继续处理其他引用
+        } catch (IOException ex) {
+            // 检查是否是 MissingObjectException 的包装
+            if (ex.getCause() instanceof MissingObjectException) {
+                handleMissingObjectException((MissingObjectException) ex.getCause(), ref);
+            } else if (ex.getMessage() != null && ex.getMessage().contains("Missing unknown")) {
+                // 处理 JGit 内部的 MissingObjectException 消息
+                MissingObjectException moe = new MissingObjectException(null, ex.getMessage());
+                handleMissingObjectException(moe, ref);
+            } else {
+                throw ex;
+            }
+        } catch (RevisionSyntaxException ex) {
+            LOGGER.warn("Invalid revision syntax for ref {}: {}", ref.getName(), ex.getMessage());
         } finally {
             if (revWalk != null) {
                 revWalkPool.returnRevWalk(revWalk);
             }
         }
+    }
+
+    /**
+     * 处理 MissingObjectException 错误
+     */
+    private void handleMissingObjectException(MissingObjectException ex, Ref ref) {
+        String objectId = ex.getObjectId() != null ? ex.getObjectId().name() : "unknown";
+        LOGGER.warn("MissingObjectException caught for ref {}: Missing unknown {}. Skipping this ref and continuing scan.", 
+                   ref.getName(), objectId);
+        
+        // 记录缺失对象信息，但不进行自动修复以避免复杂性
+        LOGGER.info("Missing object {} identified in ref {}. This ref will be skipped.", objectId, ref.getName());
     }
 
     /**

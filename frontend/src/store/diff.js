@@ -43,6 +43,8 @@ const defaultMatrixFilters = () => ({
   coverageRange: [0, 1],
   includeEmptyCoverage: true,
   fileExtensions: [],
+  excludeTestFiles: false,
+  excludePatterns: [],
 });
 
 const defaultCurrentFile = () => ({
@@ -257,6 +259,79 @@ function resolveSnapshotKey(snapshot) {
     return '';
   }
   return snapshot.repoId || snapshot.taskId || '';
+}
+
+// 文件模式匹配工具函数
+function convertWildcardToRegex(pattern) {
+  if (!pattern || typeof pattern !== 'string') {
+    return null;
+  }
+  
+  // 检查是否为正则表达式（用 / 包裹）
+  if (pattern.startsWith('/') && pattern.endsWith('/') && pattern.length > 2) {
+    try {
+      return new RegExp(pattern.slice(1, -1));
+    } catch (error) {
+      console.warn('[pattern] 无效的正则表达式:', pattern, error);
+      return null;
+    }
+  }
+  
+  // 转换通配符为正则表达式
+  const regexPattern = pattern
+    .replace(/\./g, '\\.')  // 转义点号
+    .replace(/\*/g, '.*')   // * 转换为 .*
+    .replace(/\?/g, '.');   // ? 转换为 .
+  
+  try {
+    return new RegExp(`^${regexPattern}$`);
+  } catch (error) {
+    console.warn('[pattern] 无效的模式:', pattern, error);
+    return null;
+  }
+}
+
+function matchPattern(filePath, pattern) {
+  if (!filePath || !pattern) {
+    return false;
+  }
+  
+  const regex = convertWildcardToRegex(pattern);
+  if (!regex) {
+    return false;
+  }
+  
+  // 提取文件名进行匹配
+  const fileName = filePath.split('/').pop() || filePath;
+  return regex.test(fileName);
+}
+
+function isTestFile(filePath) {
+  if (!filePath) {
+    return false;
+  }
+  
+  const fileName = filePath.split('/').pop() || filePath;
+  const testPatterns = [
+    /test/i,
+    /spec/i,
+    /.*test.*/i,
+    /.*Test.*/i,
+    /_test\./,
+    /_spec\./,
+    /\.test\./,
+    /\.spec\./
+  ];
+  
+  return testPatterns.some(pattern => pattern.test(fileName));
+}
+
+function matchesExcludePatterns(filePath, patterns) {
+  if (!Array.isArray(patterns) || patterns.length === 0) {
+    return false;
+  }
+  
+  return patterns.some(pattern => matchPattern(filePath, pattern));
 }
 
 export default {

@@ -69,6 +69,51 @@
       </el-checkbox>
     </div>
 
+    <div class="diff-matrix-filters__section">
+      <div class="diff-matrix-filters__label">排除规则</div>
+      <el-checkbox v-model="localFilters.excludeTestFiles" @change="handleExcludeTestFilesChange">
+        排除测试文件
+      </el-checkbox>
+      <div class="diff-matrix-filters__exclude-patterns" v-if="showExcludePatterns">
+        <div class="diff-matrix-filters__pattern-header">
+          <span>自定义排除规则：</span>
+          <el-button type="text" size="mini" @click="addExcludePattern">
+            <i class="el-icon-plus"></i> 添加规则
+          </el-button>
+        </div>
+        <div class="diff-matrix-filters__pattern-list">
+          <div 
+            v-for="(pattern, index) in localFilters.excludePatterns" 
+            :key="index"
+            class="diff-matrix-filters__pattern-item"
+          >
+            <el-input
+              v-model="localFilters.excludePatterns[index]"
+              placeholder="如: *Test*.java 或 /.*\.test\.js/"
+              size="mini"
+              class="diff-matrix-filters__pattern-input"
+            />
+            <el-button 
+              type="text" 
+              size="mini" 
+              @click="removeExcludePattern(index)"
+              class="diff-matrix-filters__pattern-remove"
+            >
+              <i class="el-icon-delete"></i>
+            </el-button>
+          </div>
+        </div>
+        <div class="diff-matrix-filters__pattern-tips">
+          <div class="diff-matrix-filters__tip">
+            支持通配符: * (任意字符) 和 ? (单个字符)
+          </div>
+          <div class="diff-matrix-filters__tip">
+            支持正则表达式: 用 / 包裹，如 /.*\.test\.js/
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="diff-matrix-filters__actions">
       <el-button size="mini" @click="handleReset">重置</el-button>
       <el-button type="primary" size="mini" @click="applyFilters">应用</el-button>
@@ -209,6 +254,41 @@ export default {
       this.$emit('reset');
       this.visible = false;
     },
+    handleExcludeTestFilesChange(value) {
+      if (value) {
+        // 添加默认的测试文件排除模式
+        const defaultTestPatterns = [
+          '*Test*.java',
+          '*test*.java', 
+          '*_test.go',
+          '*_test.py',
+          '*_spec.rb',
+          '*.test.js',
+          '*.spec.js',
+          '*.test.ts',
+          '*.spec.ts'
+        ];
+        
+        // 合并现有模式，避免重复
+        const existingPatterns = this.localFilters.excludePatterns || [];
+        const newPatterns = defaultTestPatterns.filter(pattern => 
+          !existingPatterns.includes(pattern)
+        );
+        
+        this.localFilters.excludePatterns = [...existingPatterns, ...newPatterns];
+      }
+    },
+    addExcludePattern() {
+      if (!this.localFilters.excludePatterns) {
+        this.localFilters.excludePatterns = [];
+      }
+      this.localFilters.excludePatterns.push('');
+    },
+    removeExcludePattern(index) {
+      if (this.localFilters.excludePatterns && index >= 0) {
+        this.localFilters.excludePatterns.splice(index, 1);
+      }
+    },
   },
 };
 </script>
@@ -250,5 +330,55 @@ export default {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 12px;
+}
+
+/* 排除规则样式 */
+.diff-matrix-filters__exclude-patterns {
+  margin-top: 8px;
+  padding-left: 20px;
+  border-left: 2px solid #e4e7ed;
+}
+
+.diff-matrix-filters__pattern-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #606266;
+}
+
+.diff-matrix-filters__pattern-list {
+  margin-bottom: 8px;
+}
+
+.diff-matrix-filters__pattern-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.diff-matrix-filters__pattern-input {
+  flex: 1;
+}
+
+.diff-matrix-filters__pattern-remove {
+  color: #f56c6c;
+  padding: 4px;
+}
+
+.diff-matrix-filters__pattern-remove:hover {
+  background-color: #fef0f0;
+}
+
+.diff-matrix-filters__pattern-tips {
+  font-size: 11px;
+  color: #909399;
+  line-height: 1.4;
+}
+
+.diff-matrix-filters__tip {
+  margin-bottom: 2px;
 }
 </style>
