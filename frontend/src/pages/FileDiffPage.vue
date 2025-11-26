@@ -117,7 +117,7 @@
 </template>
 
 <script>
-import { mapState, mapActions, mapMutations } from 'vuex';
+import { mapState, mapActions, mapMutations, mapGetters } from 'vuex';
 import DiffToolbar from '../components/DiffToolbar.vue';
 import FileDiffViewer from '../components/FileDiffViewer.vue';
 import commitApi from '../api/commit';
@@ -172,14 +172,17 @@ export default {
       diffMode: 'diffMode',
       migrating: 'migrating',
     }),
+    ...mapGetters('diff', {
+      filteredDiffMatrix: 'filteredDiffMatrix',
+    }),
     currentIndex() {
-      return this.diffMatrix.findIndex((item) => item.filePath === this.currentFile.filePath);
+      return this.filteredDiffMatrix.findIndex((item) => item.filePath === this.currentFile.filePath);
     },
     hasPrev() {
       return this.currentIndex > 0;
     },
     hasNext() {
-      return this.currentIndex >= 0 && this.currentIndex < this.diffMatrix.length - 1;
+      return this.currentIndex >= 0 && this.currentIndex < this.filteredDiffMatrix.length - 1;
     },
     canOperate() {
       return Boolean(this.currentFile.filePath);
@@ -260,11 +263,31 @@ export default {
         this.initialized = false;
         return;
       }
-      const fallback = this.diffMatrix.length > 0 ? this.diffMatrix[0].filePath : '';
-      const targetPath = this.filePath || this.currentFile.filePath || fallback;
+      
+      // 优先使用过滤后的数据，如果当前文件不在过滤结果中，则使用第一个过滤结果
+      let targetPath = this.filePath || this.currentFile.filePath;
+      
+      // 检查当前文件是否在筛选结果中
+      if (this.filteredDiffMatrix.length > 0) {
+        const currentInFiltered = this.filteredDiffMatrix.some(item => item.filePath === targetPath);
+        if (!currentInFiltered) {
+          // 如果当前文件不在筛选结果中，使用筛选结果的第一个文件
+          targetPath = this.filteredDiffMatrix[0].filePath;
+          this.$message.info('当前文件不在筛选结果中，已切换到筛选结果的第一个文件');
+        }
+      } else {
+        // 如果筛选结果为空，使用原始数据的第一个文件
+        const fallback = this.diffMatrix.length > 0 ? this.diffMatrix[0].filePath : '';
+        targetPath = targetPath || fallback;
+        if (this.filteredDiffMatrix.length === 0 && this.diffMatrix.length > 0) {
+          this.$message.warning('当前筛选条件下无结果，请调整筛选条件');
+        }
+      }
+      
       if (!targetPath) {
         return;
       }
+      
       try {
         await this.fetchDetail({ filePath: targetPath });
         this.initialized = true;
@@ -327,7 +350,7 @@ export default {
       if (!this.hasPrev) {
         return;
       }
-      const prev = this.diffMatrix[this.currentIndex - 1];
+      const prev = this.filteredDiffMatrix[this.currentIndex - 1];
       if (!prev) {
         return;
       }
@@ -338,7 +361,7 @@ export default {
       if (!this.hasNext) {
         return;
       }
-      const next = this.diffMatrix[this.currentIndex + 1];
+      const next = this.filteredDiffMatrix[this.currentIndex + 1];
       if (!next) {
         return;
       }

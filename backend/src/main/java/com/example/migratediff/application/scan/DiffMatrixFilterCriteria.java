@@ -16,4 +16,8 @@ public class DiffMatrixFilterCriteria {
     private Double coverageMax;
     @Builder.Default
     private boolean includeEmptyCoverage = true;
+    private List<String> fileExtensions;
+    @Builder.Default
+    private boolean excludeTestFiles = false;
+    private List<String> excludePatterns;
 }

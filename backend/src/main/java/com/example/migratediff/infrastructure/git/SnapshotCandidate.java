@@ -1,26 +1,21 @@
 package com.example.migratediff.infrastructure.git;
 
 import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.lib.ObjectIdRef;
-import org.eclipse.jgit.lib.Ref;
-
 import java.time.Instant;
 import java.util.Objects;
 
 /**
- * 快照候选者，表示在时间范围内找到的提交候选项
- * 支持JDK 8兼容性实现
+ * 简化的快照候选类，用于SnapshotLocator
  */
 public class SnapshotCandidate {
-
     private final ObjectId objectId;
     private final Instant instant;
     private final String refName;
 
     public SnapshotCandidate(ObjectId objectId, Instant instant, String refName) {
-        this.objectId = Objects.requireNonNull(objectId, "ObjectId cannot be null");
-        this.instant = Objects.requireNonNull(instant, "Instant cannot be null");
-        this.refName = refName; // refName可以为null
+        this.objectId = Objects.requireNonNull(objectId);
+        this.instant = Objects.requireNonNull(instant);
+        this.refName = refName;
     }
 
     public ObjectId getObjectId() {
@@ -41,18 +36,20 @@ public class SnapshotCandidate {
         if (o == null || getClass() != o.getClass()) return false;
         SnapshotCandidate that = (SnapshotCandidate) o;
         return Objects.equals(objectId, that.objectId) &&
-               Objects.equals(instant, that.instant) &&
-               Objects.equals(refName, that.refName);
+               Objects.equals(instant, that.instant);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(objectId, instant, refName);
+        return Objects.hash(objectId, instant);
     }
 
     @Override
     public String toString() {
-        return String.format("SnapshotCandidate{objectId=%s, instant=%s, refName='%s'}", 
-            objectId.name(), instant, refName);
+        return "SnapshotCandidate{" +
+                "objectId=" + objectId +
+                ", instant=" + instant +
+                ", refName='" + refName + '\'' +
+                '}';
     }
 }

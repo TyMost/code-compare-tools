@@ -50,6 +50,10 @@ public class IncrementalSnapshotScanner {
                 LOGGER.debug("Snapshot scan skip fetch for repo {}", repoConfig.getRepoPath().getAbsolutePath());
             }
             SnapshotPair pair = locateSnapshots(repository, repoConfig);
+            
+            // 打印扫描到的提交信息
+            logSnapshotDetails(repoConfig, pair);
+            
             List<DiffFile> diffFiles = buildDiffFiles(repository, repoConfig, pair);
             return DiffSummary.builder()
                     .repoConfig(repoConfig)
@@ -162,5 +166,37 @@ public class IncrementalSnapshotScanner {
                 .getConfig()
                 .getSubsections("remote")
                 .contains(remoteName);
+    }
+
+    /**
+     * 打印快照扫描结果的详细信息，包括比较的两个提交的hash值
+     */
+    private void logSnapshotDetails(RepoConfig repoConfig, SnapshotPair pair) {
+        if (repoConfig == null || pair == null) {
+            return;
+        }
+
+        String repoPath = repoConfig.getRepoPath() != null ? repoConfig.getRepoPath().getAbsolutePath() : "unknown";
+        Instant startTime = resolveStartTime(repoConfig);
+        Instant endTime = resolveEndTime(repoConfig);
+        
+        LOGGER.info("=== 快照扫描结果详情 ===");
+        LOGGER.info("仓库路径: {}", repoPath);
+        LOGGER.info("时间范围: {} 至 {}", 
+            startTime != null ? startTime.toString() : "未设置",
+            endTime != null ? endTime.toString() : "未设置");
+        
+        if (pair.getEarliestCommitId() != null) {
+            LOGGER.info("最早提交 (基准): {}", pair.getEarliestCommitId().name());
+            LOGGER.info("最早提交时间: {}", pair.getEarliestInstant() != null ? pair.getEarliestInstant().toString() : "未知");
+        }
+        
+        if (pair.getLatestCommitId() != null) {
+            LOGGER.info("最晚提交 (目标): {}", pair.getLatestCommitId().name());
+            LOGGER.info("最晚提交时间: {}", pair.getLatestInstant() != null ? pair.getLatestInstant().toString() : "未知");
+        }
+        
+        LOGGER.info("增量类型: {}", repoConfig.getDeltaType() != null ? repoConfig.getDeltaType().toString() : "未设置");
+        LOGGER.info("========================");
     }
 }

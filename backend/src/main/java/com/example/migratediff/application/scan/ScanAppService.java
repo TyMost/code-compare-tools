@@ -14,24 +14,18 @@ import com.example.migratediff.domain.migration.DecisionType;
 import com.example.migratediff.domain.migration.MigrationResult;
 import com.example.migratediff.domain.migration.MigrationSummary;
 import com.example.migratediff.domain.migration.MigrationTask;
-import com.example.migratediff.infrastructure.git.NamedThreadFactory;
 import com.example.migratediff.infrastructure.persistence.ScanReportRepository;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
-import org.springframework.lang.Nullable;
 
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
@@ -46,85 +40,26 @@ public class ScanAppService {
     private final ConcurrentMap<MigrationKey, String> migrationTaskIndex = new ConcurrentHashMap<>();
     private final ScanReportRepository scanReportRepository;
     private final SecureRandom secureRandom = new SecureRandom();
-    private final boolean enableParallelScan;
-    private final ExecutorService parallelExecutor;
 
     public ScanAppService(DiffAppService diffAppService,
                           CoverageAppService coverageAppService,
                           GenerateAppService generateAppService,
                           MigrationAppService migrationAppService,
                           ScanResultStore scanResultStore,
-                          @Nullable ScanReportRepository scanReportRepository,
-                          @Value("${migratediff.performance.parallel-scan:true}") boolean enableParallelScan) {
+                          @Nullable ScanReportRepository scanReportRepository) {
         this.diffAppService = diffAppService;
         this.coverageAppService = coverageAppService;
         this.generateAppService = generateAppService;
         this.migrationAppService = migrationAppService;
         this.scanResultStore = scanResultStore;
         this.scanReportRepository = scanReportRepository;
-        this.enableParallelScan = enableParallelScan;
-        this.parallelExecutor = enableParallelScan ? 
-            Executors.newFixedThreadPool(2, new NamedThreadFactory("parallel-scan")) : null;
     }
 
     /**
-     * 原有的扫描方法，保持向后兼容
+     * 扫描方法，使用原有的顺序处理
      */
     public ScanReport scan(ScanInput input) {
-        if (enableParallelScan) {
-            return scanParallel(input);
-        } else {
-            return scanSequential(input);
-        }
-    }
-
-    /**
-     * 并行扫描实现，同时处理oracle和gauss仓库
-     */
-    public ScanReport scanParallel(ScanInput input) {
-        long startTime = System.currentTimeMillis();
-        
-        try {
-            CompletableFuture<DiffSummary> oracleFuture = CompletableFuture.supplyAsync(
-                () -> diffAppService.generateDiff(input.getOracleSummary()), parallelExecutor);
-            
-            CompletableFuture<DiffSummary> gaussFuture = CompletableFuture.supplyAsync(
-                () -> diffAppService.generateDiff(input.getGaussSummary()), parallelExecutor);
-
-            CompletableFuture<Void> bothCompleted = CompletableFuture.allOf(oracleFuture, gaussFuture);
-            
-            DiffSummary oracle = oracleFuture.join();
-            DiffSummary gauss = gaussFuture.join();
-            
-            CoverageSummary coverageSummary = coverageAppService.analyzeCoverage(
-                    input.getTaskId(),
-                    oracle,
-                    gauss,
-                    input.isPersistResult()
-            );
-            
-            ScanReport report = new ScanReport(
-                    input.getTaskId(),
-                    input.getMode(),
-                    input.getPresetName(),
-                    input.getRepoId(),
-                    input.getRepoName(),
-                    input.isPersistResult(),
-                    oracle,
-                    gauss,
-                    coverageSummary);
-            
-            scanResultStore.save(report);
-            persistReport(report);
-            
-            long duration = System.currentTimeMillis() - startTime;
-            // 使用简单的性能指标记录，避免依赖外部库
-            System.out.println("Parallel scan completed in " + duration + "ms");
-            
-            return report;
-        } catch (Exception ex) {
-            throw new RuntimeException("Parallel scan failed", ex);
-        }
+        return scanSequential(input);
     }
 
     /**

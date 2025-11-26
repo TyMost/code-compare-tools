@@ -49,43 +49,12 @@
           同步当前页面筛选
         </el-button>
       </div>
-      <el-form label-width="90px" size="small" class="multi-export__form">
-        <el-form-item label="状态筛选">
-          <el-select
-            v-model="form.statuses"
-            placeholder="全部状态"
-            filterable
-            multiple
-            collapse-tags
-            style="width: 100%;"
-          >
-            <el-option
-              v-for="option in statusOptions"
-              :key="option.value"
-              :label="option.label"
-              :value="option.value"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="覆盖率">
-          <div class="multi-export__slider">
-            <el-slider
-              v-model="form.coverageRange"
-              range
-              :min="0"
-              :max="100"
-              :step="1"
-              :show-tooltip="false"
-            />
-            <div class="multi-export__range">
-              {{ form.coverageRange[0] }}% - {{ form.coverageRange[1] }}%
-            </div>
-          </div>
-          <el-checkbox v-model="form.includeEmptyCoverage">
-            包含覆盖率为空的文件
-          </el-checkbox>
-        </el-form-item>
-      </el-form>
+      <diff-matrix-filters
+        :filters="exportFilters"
+        :available-extensions="availableFileExtensions"
+        :original-data="allDiffMatrixData"
+        @change="handleFilterChange"
+      />
     </div>
 
     <span slot="footer" class="dialog-footer">
@@ -103,7 +72,8 @@
 </template>
 
 <script>
-import { mapState, mapActions } from 'vuex';
+import { mapState, mapActions, mapGetters } from 'vuex';
+import DiffMatrixFilters from './DiffMatrixFilters.vue';
 
 const STATUS_OPTIONS = [
   { value: 'matched', label: '已匹配' },
@@ -116,6 +86,9 @@ const STATUS_OPTIONS = [
 
 export default {
   name: 'MultiRepoExportDialog',
+  components: {
+    DiffMatrixFilters,
+  },
   props: {
     visible: {
       type: Boolean,
@@ -126,12 +99,14 @@ export default {
     return {
       internalVisible: this.visible,
       selectedTaskIds: [],
-      form: {
+      exportFilters: {
         statuses: [],
-        coverageRange: [0, 100],
+        coverageRange: [0, 1],
         includeEmptyCoverage: true,
+        fileExtensions: [],
+        excludeTestFiles: false,
+        excludePatterns: [],
       },
-      statusOptions: STATUS_OPTIONS,
     };
   },
   computed: {
@@ -140,9 +115,30 @@ export default {
       'loadingTasks',
       'matrixFilters',
       'exportingReport',
+      'diffMatrix',
     ]),
+    ...mapGetters('diff', {
+      availableFileExtensions: 'availableFileExtensions',
+      filteredDiffMatrix: 'filteredDiffMatrix',
+    }),
     tasks() {
       return Array.isArray(this.availableTasks) ? this.availableTasks : [];
+    },
+    allDiffMatrixData() {
+      return Array.isArray(this.diffMatrix) ? this.diffMatrix : [];
+    },
+    // 计算当前筛选条件的活跃数量，用于用户提示
+    activeFiltersCount() {
+      let count = 0;
+      const filters = this.exportFilters || {};
+      
+      if (filters.statuses && filters.statuses.length > 0) count++;
+      if (filters.fileExtensions && filters.fileExtensions.length > 0) count++;
+      if (!filters.includeEmptyCoverage) count++;
+      if (filters.excludeTestFiles) count++;
+      if (filters.excludePatterns && filters.excludePatterns.length > 0) count++;
+      
+      return count;
     },
   },
   watch: {
@@ -163,6 +159,15 @@ export default {
         this.$emit('update:visible', false);
       }
     },
+    // 监听store中筛选条件的变化，实时同步到导出对话框
+    matrixFilters: {
+      deep: true,
+      handler() {
+        if (this.internalVisible) {
+          this.syncFiltersFromStore();
+        }
+      },
+    },
   },
   methods: {
     ...mapActions('diff', ['fetchRecentTasks', 'exportMultiReport']),
@@ -180,24 +185,21 @@ export default {
     },
     syncFiltersFromStore() {
       const filters = this.matrixFilters || {};
-      this.form.statuses = Array.isArray(filters.statuses) ? [...filters.statuses] : [];
-      const range = Array.isArray(filters.coverageRange)
-        ? filters.coverageRange
-        : [0, 1];
-      this.form.coverageRange = range.map((value, index) => {
-        const numeric = Number(value);
-        if (Number.isNaN(numeric)) {
-          return index === 0 ? 0 : 100;
-        }
-        return Math.round(Math.min(Math.max(numeric, 0), 1) * 100);
-      });
-      this.form.includeEmptyCoverage =
-        filters.includeEmptyCoverage === undefined
-          ? true
-          : !!filters.includeEmptyCoverage;
+      this.exportFilters = {
+        statuses: Array.isArray(filters.statuses) ? [...filters.statuses] : [],
+        coverageRange: Array.isArray(filters.coverageRange) ? [...filters.coverageRange] : [0, 1],
+        includeEmptyCoverage: filters.includeEmptyCoverage === undefined ? true : !!filters.includeEmptyCoverage,
+        fileExtensions: Array.isArray(filters.fileExtensions) ? [...filters.fileExtensions] : [],
+        excludeTestFiles: filters.excludeTestFiles || false,
+        excludePatterns: Array.isArray(filters.excludePatterns) ? [...filters.excludePatterns] : [],
+      };
     },
     resetFilters() {
       this.syncFiltersFromStore();
+      this.$message.info('已同步当前页面的筛选条件');
+    },
+    handleFilterChange(filters) {
+      this.exportFilters = { ...filters };
     },
     handleSelectionChange(rows) {
       this.selectedTaskIds = (rows || []).map((row) => row.taskId);
@@ -221,20 +223,37 @@ export default {
         return;
       }
       const filters = {
-        statuses: this.form.statuses,
-        coverageRange: this.form.coverageRange.map((value, index) => {
-          const numeric = Number(value);
-          if (Number.isNaN(numeric)) {
-            return index === 0 ? 0 : 1;
-          }
-          const normalized = Math.min(Math.max(numeric, 0), 100);
-          return Number((normalized / 100).toFixed(4));
-        }),
-        includeEmptyCoverage: this.form.includeEmptyCoverage,
+        statuses: this.exportFilters.statuses,
+        coverageRange: this.exportFilters.coverageRange,
+        includeEmptyCoverage: this.exportFilters.includeEmptyCoverage,
+        fileExtensions: this.exportFilters.fileExtensions,
+        excludeTestFiles: this.exportFilters.excludeTestFiles,
+        excludePatterns: this.exportFilters.excludePatterns,
       };
+      
+      // 提供用户友好的导出信息
+      const filterInfo = [];
+      if (filters.statuses && filters.statuses.length > 0) {
+        filterInfo.push(`状态: ${filters.statuses.join(', ')}`);
+      }
+      if (filters.fileExtensions && filters.fileExtensions.length > 0) {
+        filterInfo.push(`文件类型: ${filters.fileExtensions.join(', ')}`);
+      }
+      if (!filters.includeEmptyCoverage) {
+        filterInfo.push('排除空覆盖率');
+      }
+      if (filters.excludeTestFiles) {
+        filterInfo.push('排除测试文件');
+      }
+      if (filters.excludePatterns && filters.excludePatterns.length > 0) {
+        filterInfo.push(`排除规则: ${filters.excludePatterns.length}个`);
+      }
+      
+      const filterSummary = filterInfo.length > 0 ? ` (应用筛选: ${filterInfo.join(', ')})` : ' (导出全部数据)';
+      
       try {
         await this.exportMultiReport({ repos, filters, format: 'csv' });
-        this.$message.success('报表生成成功，已开始下载');
+        this.$message.success(`报表生成成功，已开始下载${filterSummary}`);
         this.handleClose();
       } catch (error) {
         this.$message.error(error.message || '导出失败');

@@ -10,7 +10,6 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.revwalk.RevWalk;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
@@ -45,12 +44,17 @@ public class GitCommitHistoryService {
      * @param gaussRepo Gauss仓库配置
      * @return 文件提交历史DTO
      */
-    @Cacheable(value = "fileCommitHistory", key = "#filePath + '_' + #oracleRepo.repoPath.absolutePath + '_' + #gaussRepo.repoPath.absolutePath")
+    @Cacheable(value = "fileCommitHistory", key = "#filePath + '_' + (#oracleRepo != null ? #oracleRepo.repoPath.absolutePath : 'null') + '_' + (#gaussRepo != null ? #gaussRepo.repoPath.absolutePath : 'null')")
     public FileCommitHistoryDTO getFileCommitHistory(String filePath, RepoConfig oracleRepo, RepoConfig gaussRepo) {
         log.debug("Getting commit history for file: {}", filePath);
+        log.debug("Oracle repo config: {}", oracleRepo);
+        log.debug("Gauss repo config: {}", gaussRepo);
         
         List<GitCommitInfoDTO> oracleCommits = getCommitHistoryForRepo(filePath, oracleRepo, RepoType.ORACLE);
         List<GitCommitInfoDTO> gaussCommits = getCommitHistoryForRepo(filePath, gaussRepo, RepoType.GAUSS);
+        
+        log.debug("Oracle commits found: {}", oracleCommits.size());
+        log.debug("Gauss commits found: {}", gaussCommits.size());
         
         return FileCommitHistoryDTO.builder()
                 .filePath(filePath)
@@ -78,13 +82,7 @@ public class GitCommitHistoryService {
             return new ArrayList<>();
         }
 
-        Repository repository = null;
-        RevWalk revWalk = null;
-        
-        try {
-            repository = gitRepositoryHelper.openRepository(repoConfig);
-            revWalk = gitRepositoryHelper.borrowRevWalk(repository);
-            
+        try (Repository repository = gitRepositoryHelper.openRepository(repoConfig)) {
             // 使用Git API获取文件历史
             try (Git git = new Git(repository)) {
                 Iterable<RevCommit> commitIterable = git.log()
@@ -106,13 +104,6 @@ public class GitCommitHistoryService {
         } catch (GitAPIException | IOException e) {
             log.error("Failed to get commit history for file: {} in repo: {}", filePath, repoType, e);
             return new ArrayList<>();
-        } finally {
-            if (revWalk != null) {
-                gitRepositoryHelper.returnRevWalk(revWalk);
-            }
-            if (repository != null) {
-                gitRepositoryHelper.returnRepository(repoConfig, repository);
-            }
         }
     }
 

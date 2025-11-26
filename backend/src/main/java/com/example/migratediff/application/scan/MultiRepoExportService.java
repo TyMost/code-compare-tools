@@ -1,6 +1,7 @@
 package com.example.migratediff.application.scan;
 
 import com.example.migratediff.shared.exception.NotFoundException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -15,6 +16,7 @@ import java.util.stream.Collectors;
  * 负责将多个任务的扫描结果聚合为导出视图。
  */
 @Service
+@Slf4j
 public class MultiRepoExportService {
 
     private final ScanResultStore scanResultStore;
@@ -72,14 +74,29 @@ public class MultiRepoExportService {
         if (selection == null) {
             throw new IllegalArgumentException("仓库配置为空");
         }
+        
+        log.debug("解析仓库选择: taskId={}, presetName={}, alias={}", 
+            selection.getTaskId(), selection.getPresetName(), selection.getAlias());
+        
         if (StringUtils.hasText(selection.getTaskId())) {
+            log.debug("通过taskId查找扫描结果: {}", selection.getTaskId());
             return scanResultStore.find(selection.getTaskId())
-                    .orElseThrow(() -> new NotFoundException("找不到 taskId=" + selection.getTaskId() + " 对应的扫描结果"));
+                    .orElseThrow(() -> {
+                        log.warn("找不到taskId对应的扫描结果: {}", selection.getTaskId());
+                        return new NotFoundException("找不到 taskId=" + selection.getTaskId() + " 对应的扫描结果");
+                    });
         }
+        
         if (StringUtils.hasText(selection.getPresetName())) {
+            log.debug("通过presetName查找扫描结果: {}", selection.getPresetName());
             return scanResultStore.findLatestByPreset(selection.getPresetName())
-                    .orElseThrow(() -> new NotFoundException("预设 " + selection.getPresetName() + " 暂无扫描记录"));
+                    .orElseThrow(() -> {
+                        log.warn("找不到presetName对应的扫描结果: {}", selection.getPresetName());
+                        return new NotFoundException("预设 " + selection.getPresetName() + " 暂无扫描记录");
+                    });
         }
+        
+        log.error("仓库配置缺少taskId和presetName: {}", selection);
         throw new IllegalArgumentException("仓库配置必须提供 taskId 或 presetName");
     }
 

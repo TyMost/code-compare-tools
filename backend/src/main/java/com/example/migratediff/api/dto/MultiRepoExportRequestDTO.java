@@ -21,6 +21,9 @@ public class MultiRepoExportRequestDTO {
     private Double coverageMin;
     private Double coverageMax;
     private boolean includeEmptyCoverage = true;
+    private List<String> fileExtensions = new ArrayList<>();
+    private boolean excludeTestFiles = false;
+    private List<String> excludePatterns = new ArrayList<>();
     /**
      * 目前仅支持 csv，可为后续扩展预留。
      */

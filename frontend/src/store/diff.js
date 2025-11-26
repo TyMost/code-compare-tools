@@ -92,6 +92,8 @@ function buildExportFilters(source = {}) {
     includeEmptyCoverage:
       source.includeEmptyCoverage === undefined ? true : !!source.includeEmptyCoverage,
     fileExtensions: Array.isArray(source.fileExtensions) ? [...source.fileExtensions] : [],
+    excludeTestFiles: source.excludeTestFiles === undefined ? false : !!source.excludeTestFiles,
+    excludePatterns: Array.isArray(source.excludePatterns) ? [...source.excludePatterns] : [],
   };
 }
 
@@ -202,9 +204,9 @@ function normalizeBundleInput(payload) {
     };
   }
   return {
-    profiles: [],
-    meta: DEFAULT_BUNDLE_META(),
-  };
+      profiles: [],
+      meta: DEFAULT_BUNDLE_META(),
+    };
 }
 
 function normalizeProfile(record = {}, fallbackVersion = '') {
@@ -389,6 +391,12 @@ export default {
         fileExtensions: Array.isArray(payload.fileExtensions) 
           ? [...payload.fileExtensions] 
           : state.matrixFilters.fileExtensions,
+        excludeTestFiles: payload.excludeTestFiles === undefined 
+          ? state.matrixFilters.excludeTestFiles 
+          : !!payload.excludeTestFiles,
+        excludePatterns: Array.isArray(payload.excludePatterns) 
+          ? [...payload.excludePatterns] 
+          : state.matrixFilters.excludePatterns,
       };
     },
     resetMatrixFilters(state) {
@@ -471,10 +479,22 @@ export default {
           ? true
           : !!filters.includeEmptyCoverage;
       const fileExtensions = Array.isArray(filters.fileExtensions) ? filters.fileExtensions : [];
+      const excludeTestFiles = filters.excludeTestFiles || false;
+      const excludePatterns = Array.isArray(filters.excludePatterns) ? filters.excludePatterns : [];
       const [min = 0, max = 1] = coverageRange;
       return state.diffMatrix.filter((item) => {
         const statusMatches = !statuses.length || statuses.includes(item.status);
         if (!statusMatches) {
+          return false;
+        }
+        
+        // 排除测试文件
+        if (excludeTestFiles && isTestFile(item.filePath)) {
+          return false;
+        }
+        
+        // 排除自定义模式匹配的文件
+        if (matchesExcludePatterns(item.filePath, excludePatterns)) {
           return false;
         }
         
@@ -809,23 +829,70 @@ export default {
       if (!Array.isArray(repos) || repos.length === 0) {
         throw new Error('请至少选择一个任务');
       }
+      
+      // 验证每个仓库选择的配置
+      const invalidRepos = repos.filter(repo => !repo.taskId && !repo.presetName);
+      if (invalidRepos.length > 0) {
+        console.error('无效的仓库配置:', invalidRepos);
+        throw new Error(`存在无效的仓库配置，缺少 taskId 和 presetName`);
+      }
+      
+      console.log('导出多仓库报告:', { repos, filters, format });
+      
       const exportFilters = buildExportFilters(filters || {});
       commit('setExportingReport', true);
       try {
-        const response = await exportMultiReportRequest({
+        const requestPayload = {
           repos,
           statuses: exportFilters.statuses,
           coverageMin: exportFilters.coverageRange[0],
           coverageMax: exportFilters.coverageRange[1],
           includeEmptyCoverage: exportFilters.includeEmptyCoverage,
+          fileExtensions: exportFilters.fileExtensions,
+          excludeTestFiles: exportFilters.excludeTestFiles,
+          excludePatterns: exportFilters.excludePatterns,
           format,
-        });
+        };
+        
+        console.log('发送导出请求:', requestPayload);
+        const response = await exportMultiReportRequest(requestPayload);
+        
         const filename = resolveFilenameFromResponse(
           response,
           `scan-report-multi-${Date.now()}.${format}`,
         );
         downloadBlob(response.data, filename);
+        console.log('导出成功:', filename);
         return filename;
+      } catch (error) {
+        console.error('导出失败:', error);
+        
+        // 提供更友好的错误信息
+        let errorMessage = '导出失败';
+        if (error.response) {
+          if (error.response.status === 400) {
+            const errorText = await error.response.text();
+            console.error('400错误详情:', errorText);
+            
+            if (errorText.includes('Unknown scan preset')) {
+              errorMessage = '找不到预设配置，请确保配置已正确导入或使用默认配置';
+            } else if (errorText.includes('找不到 taskId')) {
+              errorMessage = '找不到对应的扫描任务，请先执行扫描后再导出';
+            } else if (errorText.includes('暂无扫描记录')) {
+              errorMessage = '暂无扫描记录，请先执行扫描';
+            } else {
+              errorMessage = `请求参数错误: ${errorText}`;
+            }
+          } else if (error.response.status === 500) {
+            errorMessage = '服务器内部错误，请稍后重试';
+          } else {
+            errorMessage = `导出失败 (${error.response.status}): ${error.message || '未知错误'}`;
+          }
+        } else if (error.message) {
+          errorMessage = error.message;
+        }
+        
+        throw new Error(errorMessage);
       } finally {
         commit('setExportingReport', false);
       }

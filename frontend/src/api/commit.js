@@ -12,11 +12,7 @@ export const commitApi = {
    * @returns {Promise} 提交历史数据
    */
   getFileCommitHistory(params) {
-    return request({
-      url: '/api/scan/commit-history',
-      method: 'post',
-      data: params
-    })
+    return request('POST', '/api/scan/commit-history', params)
   },
 
   /**

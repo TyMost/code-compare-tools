@@ -204,7 +204,7 @@ public class ScanMapper {
             return null;
         }
         return presetProperties.findPreset(presetName)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown scan preset: " + presetName));
+                .orElse(null); // 修改：找不到预设时返回null而不是抛出异常，支持导入的配置
     }
 
     private DiffRequestDTO mergeWithPreset(DiffRequestDTO override, ScanPresetProperties.RepoPreset preset) {

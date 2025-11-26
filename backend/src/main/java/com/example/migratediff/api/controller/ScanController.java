@@ -164,19 +164,40 @@ public class ScanController {
 
     @PostMapping(value = "/report/aggregate", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
     public ResponseEntity<ByteArrayResource> exportAggregated(@Valid @RequestBody MultiRepoExportRequestDTO requestDTO) {
+        log.info("收到多仓库导出请求: repos={}, format={}", 
+            requestDTO.getRepos().size(), requestDTO.getFormat());
+        
+        // 记录每个仓库选择的详细信息
+        requestDTO.getRepos().forEach(repo -> 
+            log.debug("仓库选择: taskId={}, presetName={}, alias={}", 
+                repo.getTaskId(), repo.getPresetName(), repo.getAlias()));
+        
         MultiRepoExportRequest request = toExportRequest(requestDTO);
+        log.debug("转换后的请求: repos={}, format={}", 
+            request.getRepos().size(), request.getFormat());
+        
         if (!"csv".equals(request.getFormat())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "目前仅支?CSV 格式导出");
+            log.warn("不支持的导出格式: {}", request.getFormat());
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "目前仅支持CSV 格式导出");
         }
-        MultiRepoExportResult result = multiRepoExportService.export(request);
-        byte[] bytes = csvReportWriter.write(result);
-        ByteArrayResource resource = new ByteArrayResource(bytes);
-        String filename = buildFileName(request.getFormat(), result);
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                .contentLength(bytes.length)
-                .contentType(csvReportWriter.contentType())
-                .body(resource);
+        
+        try {
+            MultiRepoExportResult result = multiRepoExportService.export(request);
+            log.info("多仓库导出完成: 生成文件，仓库数量={}", result.getRepoReports().size());
+            
+            byte[] bytes = csvReportWriter.write(result);
+            ByteArrayResource resource = new ByteArrayResource(bytes);
+            String filename = buildFileName(request.getFormat(), result);
+            
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                    .contentLength(bytes.length)
+                    .contentType(csvReportWriter.contentType())
+                    .body(resource);
+        } catch (Exception e) {
+            log.error("多仓库导出失败: {}", e.getMessage(), e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "导出失败: " + e.getMessage());
+        }
     }
 
     private MultiRepoExportRequest toExportRequest(MultiRepoExportRequestDTO requestDTO) {
@@ -185,6 +206,9 @@ public class ScanController {
                 .coverageMin(requestDTO.getCoverageMin())
                 .coverageMax(requestDTO.getCoverageMax())
                 .includeEmptyCoverage(requestDTO.isIncludeEmptyCoverage())
+                .fileExtensions(normalizeFileExtensions(requestDTO.getFileExtensions()))
+                .excludeTestFiles(requestDTO.isExcludeTestFiles())
+                .excludePatterns(normalizeExcludePatterns(requestDTO.getExcludePatterns()))
                 .build();
         List<MultiRepoExportRequest.RepoSelection> selections = requestDTO.getRepos().stream()
                 .map(repo -> MultiRepoExportRequest.RepoSelection.builder()
@@ -208,6 +232,26 @@ public class ScanController {
         return statuses.stream()
                 .filter(StringUtils::hasText)
                 .map(status -> status.trim().toLowerCase(Locale.ROOT))
+                .collect(Collectors.toList());
+    }
+
+    private List<String> normalizeFileExtensions(List<String> fileExtensions) {
+        if (fileExtensions == null) {
+            return java.util.Collections.emptyList();
+        }
+        return fileExtensions.stream()
+                .filter(StringUtils::hasText)
+                .map(ext -> ext.trim().toLowerCase(Locale.ROOT))
+                .collect(Collectors.toList());
+    }
+
+    private List<String> normalizeExcludePatterns(List<String> excludePatterns) {
+        if (excludePatterns == null) {
+            return java.util.Collections.emptyList();
+        }
+        return excludePatterns.stream()
+                .filter(StringUtils::hasText)
+                .map(pattern -> pattern.trim())
                 .collect(Collectors.toList());
     }
 

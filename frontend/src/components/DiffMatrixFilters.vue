@@ -177,13 +177,20 @@ export default {
           ? true
           : !!incoming.includeEmptyCoverage;
       const fileExtensions = Array.isArray(incoming.fileExtensions) ? incoming.fileExtensions : [];
+      const excludePatterns = Array.isArray(incoming.excludePatterns) ? incoming.excludePatterns : [];
       return (
         statuses.length > 0 ||
         Number(min) > 0 ||
         Number(max) < 1 ||
         includeEmpty === false ||
-        fileExtensions.length > 0
+        fileExtensions.length > 0 ||
+        excludePatterns.length > 0 ||
+        incoming.excludeTestFiles === true
       );
+    },
+    showExcludePatterns() {
+      return this.localFilters.excludeTestFiles || 
+             (Array.isArray(this.localFilters.excludePatterns) && this.localFilters.excludePatterns.length > 0);
     },
   },
   watch: {
@@ -215,11 +222,15 @@ export default {
             })
           : [0, 100];
       const fileExtensions = Array.isArray(source.fileExtensions) ? [...source.fileExtensions] : [];
+      const excludePatterns = Array.isArray(source.excludePatterns) ? [...source.excludePatterns] : [];
+      const excludeTestFiles = source.excludeTestFiles === undefined ? false : !!source.excludeTestFiles;
       return {
         statuses,
         coverageRange,
         includeEmptyCoverage: includeEmpty,
         fileExtensions,
+        excludePatterns,
+        excludeTestFiles,
       };
     },
     applyFilters() {
@@ -240,6 +251,10 @@ export default {
         fileExtensions: Array.isArray(this.localFilters.fileExtensions)
           ? [...this.localFilters.fileExtensions]
           : [],
+        excludePatterns: Array.isArray(this.localFilters.excludePatterns)
+          ? [...this.localFilters.excludePatterns].filter(pattern => pattern.trim() !== '')
+          : [],
+        excludeTestFiles: this.localFilters.excludeTestFiles || false,
       });
       this.visible = false;
     },
@@ -258,15 +273,8 @@ export default {
       if (value) {
         // 添加默认的测试文件排除模式
         const defaultTestPatterns = [
-          '*Test*.java',
-          '*test*.java', 
-          '*_test.go',
-          '*_test.py',
-          '*_spec.rb',
-          '*.test.js',
-          '*.spec.js',
-          '*.test.ts',
-          '*.spec.ts'
+          '*Test.java',
+          '*test.java', 
         ];
         
         // 合并现有模式，避免重复
