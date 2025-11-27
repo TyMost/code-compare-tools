@@ -64,12 +64,108 @@ export const commitApi = {
     // 移除多余的空白字符
     const cleanMessage = message.trim()
     
-    // 如果消息太长，截断并添加省略号
-    if (cleanMessage.length > maxLength) {
-      return cleanMessage.substring(0, maxLength) + '...'
+    // 识别并替换"Reviewed-on:"模式的URL
+    const processedMessage = this.parseReviewUrls(cleanMessage)
+    
+    // 如果消息太长，截断并添加省略号（考虑HTML标签长度）
+    if (this.getTextLength(processedMessage) > maxLength) {
+      return this.truncateHtml(processedMessage, maxLength) + '...'
     }
     
-    return cleanMessage
+    return processedMessage
+  },
+
+  /**
+   * 解析提交信息中的Review URL
+   * @param {string} message 提交信息
+   * @returns {string} 包含HTML链接的提交信息
+   */
+  parseReviewUrls(message) {
+    if (!message) return message
+    
+    // 匹配"Reviewed-on:"模式，支持您的URL格式: https://scm-xx.xx.xxxx/x/x/x/+/1234
+    const REVIEW_URL_REGEX = /Reviewed-on:\s*(https:\/\/scm-[a-zA-Z0-9-]+\.cs\.com\/[^\s]+\/[^\s]+\/[^\s]+\/\+\/\d+)/gi
+    
+    return message.replace(
+      REVIEW_URL_REGEX,
+      (match, url) => {
+        // 验证URL安全性
+        if (this.isValidReviewUrl(url)) {
+          return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="review-link">Reviewed-on: ${url}</a>`
+        }
+        return match
+      }
+    )
+  },
+
+  /**
+   * 验证Review URL的安全性
+   * @param {string} url 待验证的URL
+   * @returns {boolean} 是否为安全的Review URL
+   */
+  isValidReviewUrl(url) {
+    if (!url || typeof url !== 'string') return false
+    
+    try {
+      // 基本URL格式验证
+      const urlObj = new URL(url)
+      
+      // 只允许https协议
+      if (urlObj.protocol !== 'https:') return false
+      
+      // 只允许scm-*.cs.com域名
+      if (!urlObj.hostname.match(/^scm-[a-zA-Z0-9-]+\.cs\.com$/)) return false
+      
+      return true
+    } catch (error) {
+      return false
+    }
+  },
+
+  /**
+   * 获取文本长度（忽略HTML标签）
+   * @param {string} html HTML字符串
+   * @returns {number} 文本长度
+   */
+  getTextLength(html) {
+    if (!html) return 0
+    
+    // 移除HTML标签，只计算文本长度
+    return html.replace(/<[^>]*>/g, '').length
+  },
+
+  /**
+   * 智能截断HTML字符串
+   * @param {string} html HTML字符串
+   * @param {number} maxLength 最大长度
+   * @returns {string} 截断后的HTML字符串
+   */
+  truncateHtml(html, maxLength) {
+    if (!html) return ''
+    
+    let result = ''
+    let textLength = 0
+    let i = 0
+    
+    while (i < html.length && textLength < maxLength) {
+      const char = html[i]
+      
+      if (char === '<') {
+        // 遇到HTML标签开始，直接跳过到标签结束
+        const tagEnd = html.indexOf('>', i)
+        if (tagEnd === -1) break
+        
+        result += html.substring(i, tagEnd + 1)
+        i = tagEnd + 1
+      } else {
+        // 普通字符，计入文本长度
+        result += char
+        textLength++
+        i++
+      }
+    }
+    
+    return result
   },
 
   /**
@@ -163,6 +259,11 @@ export const commitApi = {
       filePath: data.filePath || '',
       oracleCommits: (data.oracleCommits || []).map(commit => ({
         ...commit,
+        // 添加字段别名以确保兼容性
+        hash: commit.commitHash,        // hash别名
+        author: commit.authorName,       // author别名
+        time: commit.commitTime,         // time别名
+        type: commit.repoType,           // type别名
         repoType: 'oracle',
         formattedTime: this.formatCommitTime(commit.commitTime),
         formattedAuthor: this.formatAuthor(commit.authorName, commit.authorEmail),
@@ -174,6 +275,11 @@ export const commitApi = {
       })),
       gaussCommits: (data.gaussCommits || []).map(commit => ({
         ...commit,
+        // 添加字段别名以确保兼容性
+        hash: commit.commitHash,        // hash别名
+        author: commit.authorName,       // author别名
+        time: commit.commitTime,         // time别名
+        type: commit.repoType,           // type别名
         repoType: 'gauss',
         formattedTime: this.formatCommitTime(commit.commitTime),
         formattedAuthor: this.formatAuthor(commit.authorName, commit.authorEmail),

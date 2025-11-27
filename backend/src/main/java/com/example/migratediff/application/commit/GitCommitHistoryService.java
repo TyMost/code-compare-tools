@@ -8,8 +8,16 @@ import com.example.migratediff.infrastructure.git.GitRepositoryHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.diff.DiffEntry;
+import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.diff.Edit;
+import org.eclipse.jgit.diff.EditList;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.treewalk.CanonicalTreeParser;
+import org.eclipse.jgit.treewalk.EmptyTreeIterator;
+import org.eclipse.jgit.util.io.DisabledOutputStream;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
@@ -96,7 +104,7 @@ public class GitCommitHistoryService {
                 }
                 
                 return commits.stream()
-                        .map(commit -> convertToGitCommitInfoDTO(commit, repoConfig, repoType))
+                        .map(commit -> convertToGitCommitInfoDTO(commit, repoConfig, repoType, filePath))
                         .sorted(Comparator.comparing(GitCommitInfoDTO::getCommitTime).reversed())
                         .collect(Collectors.toList());
             }
@@ -113,9 +121,10 @@ public class GitCommitHistoryService {
      * @param commit JGit提交对象
      * @param repoConfig 仓库配置
      * @param repoType 仓库类型
+     * @param filePath 文件路径
      * @return Git提交信息DTO
      */
-    private GitCommitInfoDTO convertToGitCommitInfoDTO(RevCommit commit, RepoConfig repoConfig, RepoType repoType) {
+    private GitCommitInfoDTO convertToGitCommitInfoDTO(RevCommit commit, RepoConfig repoConfig, RepoType repoType, String filePath) {
         return GitCommitInfoDTO.builder()
                 .commitHash(commit.getId().getName())
                 .shortHash(commit.getId().abbreviate(7).name())
@@ -125,7 +134,7 @@ public class GitCommitHistoryService {
                 .message(commit.getFullMessage())
                 .branch(getCurrentBranch(repoConfig))
                 .url(buildGitWebUrl(commit, repoConfig))
-                .stats(extractCommitStats(commit))
+                .stats(extractCommitStats(commit, repoConfig, filePath))
                 .repoType(repoType.name().toLowerCase())
                 .build();
     }
@@ -173,17 +182,79 @@ public class GitCommitHistoryService {
      * 提取提交统计信息
      * 
      * @param commit 提交对象
+     * @param repoConfig 仓库配置
+     * @param filePath 文件路径
      * @return 提交统计DTO
      */
-    private GitCommitInfoDTO.CommitStatsDTO extractCommitStats(RevCommit commit) {
-        // JGit中提取提交统计信息比较复杂，这里提供基本实现
-        // 实际项目中可能需要更详细的统计计算
-        return GitCommitInfoDTO.CommitStatsDTO.builder()
-                .added(0) // 需要通过DiffFormatter计算
-                .removed(0) // 需要通过DiffFormatter计算
-                .modified(0) // 需要通过DiffFormatter计算
-                .filesChanged(commit.getParentCount() > 0 ? 1 : 0)
-                .build();
+    private GitCommitInfoDTO.CommitStatsDTO extractCommitStats(RevCommit commit, RepoConfig repoConfig, String filePath) {
+        try (Repository repository = gitRepositoryHelper.openRepository(repoConfig)) {
+            try (Git git = new Git(repository)) {
+                DiffFormatter diffFormatter = new DiffFormatter(DisabledOutputStream.INSTANCE);
+                diffFormatter.setRepository(repository);
+                
+                List<DiffEntry> diffs;
+                if (commit.getParentCount() > 0) {
+                    RevCommit parent = commit.getParent(0);
+                    try (ObjectReader reader = repository.newObjectReader()) {
+                        CanonicalTreeParser parentTreeIterator = new CanonicalTreeParser();
+                        CanonicalTreeParser commitTreeIterator = new CanonicalTreeParser();
+                        
+                        parentTreeIterator.reset(reader, parent.getTree());
+                        commitTreeIterator.reset(reader, commit.getTree());
+                        
+                        diffs = diffFormatter.scan(parentTreeIterator, commitTreeIterator);
+                    }
+                } else {
+                    // 对于初始提交，使用空树作为父节点
+                    diffs = diffFormatter.scan(new EmptyTreeIterator(), new CanonicalTreeParser());
+                }
+                
+                int added = 0, removed = 0, modified = 0;
+                int filesChanged = 0;
+                
+                for (DiffEntry diff : diffs) {
+                    // 检查是否涉及目标文件
+                    boolean isTargetFile = diff.getNewPath().equals(filePath) || 
+                                        diff.getOldPath().equals(filePath) ||
+                                        (filePath != null && (diff.getNewPath().contains(filePath) || diff.getOldPath().contains(filePath)));
+                    
+                    if (isTargetFile) {
+                        filesChanged++;
+                        try {
+                            EditList editList = diffFormatter.toFileHeader(diff).toEditList();
+                            for (Edit edit : editList) {
+                                if (edit.getType() == Edit.Type.INSERT) {
+                                    added += edit.getLengthB();
+                                } else if (edit.getType() == Edit.Type.DELETE) {
+                                    removed += edit.getLengthA();
+                                } else if (edit.getType() == Edit.Type.REPLACE) {
+                                    removed += edit.getLengthA();
+                                    added += edit.getLengthB();
+                                }
+                            }
+                        } catch (Exception e) {
+                            log.warn("Failed to calculate edit stats for diff: {}", diff, e);
+                            // 如果无法计算详细统计，至少计算文件变更
+                        }
+                    }
+                }
+                
+                return GitCommitInfoDTO.CommitStatsDTO.builder()
+                        .added(added)
+                        .removed(removed)
+                        .modified(modified)
+                        .filesChanged(filesChanged)
+                        .build();
+            }
+        } catch (IOException e) {
+            log.warn("Failed to extract commit stats for commit: {} in file: {}", commit.getId(), filePath, e);
+            return GitCommitInfoDTO.CommitStatsDTO.builder()
+                    .added(0)
+                    .removed(0)
+                    .modified(0)
+                    .filesChanged(0)
+                    .build();
+        }
     }
 
     /**

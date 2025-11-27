@@ -70,7 +70,7 @@
                       <div class="commit-author">
                         <span class="author-name">{{ commit.author }}</span>
                       </div>
-                      <div class="commit-message">{{ commit.message }}</div>
+                      <div class="commit-message" v-html="commit.formattedMessage"></div>
                       <div class="commit-stats" v-if="commit.stats">
                         <span class="stat-item stat-added">+{{ commit.stats.added || 0 }}</span>
                         <span class="stat-item stat-removed">-{{ commit.stats.removed || 0 }}</span>
@@ -695,6 +695,24 @@ export default {
   line-height: 1.4;
   word-break: break-word;
   margin-bottom: 8px;
+}
+
+/* Review链接样式 */
+.commit-message :deep(.review-link) {
+  color: #409eff;
+  text-decoration: none;
+  font-weight: 500;
+  border-bottom: 1px dotted #409eff;
+  transition: all 0.3s;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+.commit-message :deep(.review-link):hover {
+  color: #66b1ff;
+  border-bottom-style: solid;
+  background-color: rgba(64, 158, 255, 0.05);
+  text-decoration: none;
 }
 
 .commit-stats {
