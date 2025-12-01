@@ -203,6 +203,7 @@ public class GitBranchFetcher {
 
     /**
      * 使用时间窗口定位提交：LATEST 返回窗口内最新提交，EARLIEST 返回窗口内最早提交。
+     * 对于时间范围模式，EARLIEST 返回其父提交以实现真正的增量diff。
      */
     private ObjectId resolveCommitByTime(Repository repository, RepoBranch branch, CommitSelection selection) throws IOException {
         if (!hasTimeRange(branch)) {
@@ -234,7 +235,36 @@ public class GitBranchFetcher {
                 }
                 earliest = commit;
             }
-            return earliest != null ? earliest.getId() : null;
+            
+            if (earliest != null) {
+                ObjectId result = earliest.getId();
+                
+                // 🔧 关键修改：时间范围模式下，earliest返回其父提交
+                if (selection == CommitSelection.EARLIEST) {
+                    ObjectId parentId = getParentCommit(repository, result);
+                    if (parentId != null) {
+                        LOGGER.debug("时间范围增量diff: 使用earliest的父提交 {} 作为base", parentId.name());
+                        return parentId;
+                    }
+                    LOGGER.debug("earliest为初始提交，使用自身作为base: {}", result.name());
+                    return result;
+                }
+                return result;
+            }
+            return null;
+        }
+    }
+
+    /**
+     * 获取指定提交的父提交
+     */
+    private ObjectId getParentCommit(Repository repository, ObjectId commitId) throws IOException {
+        try (RevWalk revWalk = new RevWalk(repository)) {
+            RevCommit commit = revWalk.parseCommit(commitId);
+            if (commit.getParentCount() > 0) {
+                return commit.getParent(0).getId();
+            }
+            return null; // 没有父提交
         }
     }
 
