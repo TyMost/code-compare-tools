@@ -3,6 +3,7 @@ package com.example.migratediff.domain.coverage;
 import com.example.migratediff.domain.diff.DiffBlock;
 import com.example.migratediff.domain.diff.DiffFile;
 import com.example.migratediff.shared.utils.CoverageUtils;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -16,6 +17,10 @@ public class CoverageEvaluator {
 
     /** 判断两个变更块是否匹配的展示阈值。 */
     private static final double DISPLAY_SIMILARITY_THRESHOLD = 0.85D;
+
+    /** 噪音过滤开关，用于控制是否过滤import语句和注释 */
+    @Value("${coverage.filter.noise.enabled:false}")
+    private boolean enableNoiseFiltering;
 
     /**
      * 计算单个文件的覆盖率，使用默认阈值。
@@ -178,7 +183,7 @@ public class CoverageEvaluator {
 
     private List<String> tokenizeIfNotEmpty(String s) {
         if (s == null || s.isEmpty()) return null;
-        return CoverageUtils.tokenize(s);
+        return CoverageUtils.tokenize(s, enableNoiseFiltering);
     }
 
     private double score(List<String> a, List<String> b, double weight) {

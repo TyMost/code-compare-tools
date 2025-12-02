@@ -91,9 +91,25 @@ public final class CoverageUtils {
     }
 
     public static List<String> tokenize(String content) {
+        return tokenize(content, false); // 默认不启用过滤
+    }
+
+    /**
+     * Tokenize content with optional noise filtering.
+     * 
+     * @param content the content to tokenize
+     * @param filterNoise whether to filter out import statements and comments
+     * @return list of tokens
+     */
+    public static List<String> tokenize(String content, boolean filterNoise) {
         if (isBlank(content)) {
             return new ArrayList<>();
         }
+        
+        if (filterNoise) {
+            content = filterCodeNoise(content);
+        }
+        
         String[] tokens = content.trim().split("\\s+");
         List<String> result = new ArrayList<>(tokens.length);
         for (String token : tokens) {
@@ -102,6 +118,46 @@ public final class CoverageUtils {
             }
         }
         return result;
+    }
+
+    /**
+     * Filter out import statements and comments from code content.
+     * This method safely removes common noise that affects coverage calculation.
+     * 
+     * @param content the code content
+     * @return filtered content
+     */
+    private static String filterCodeNoise(String content) {
+        String[] lines = content.split("\\r?\\n");
+        StringBuilder filtered = new StringBuilder();
+        boolean inMultiLineComment = false;
+        
+        for (String line : lines) {
+            String trimmed = line.trim();
+            
+            // Handle multi-line comments
+            if (trimmed.startsWith("/*")) {
+                inMultiLineComment = true;
+            }
+            if (inMultiLineComment) {
+                if (trimmed.endsWith("*/")) {
+                    inMultiLineComment = false;
+                }
+                continue;
+            }
+            
+            // Skip single-line comments, imports, and javadoc lines
+            if (trimmed.startsWith("//") || 
+                trimmed.startsWith("import ") || 
+                trimmed.startsWith("*") ||
+                trimmed.startsWith("/**")) {
+                continue;
+            }
+            
+            filtered.append(line).append("\n");
+        }
+        
+        return filtered.toString();
     }
 
     private static boolean isBlank(String value) {
