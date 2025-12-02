@@ -1,119 +1,96 @@
 <template>
   <div class="dashboard-page">
+    <!-- 简化的工具栏 -->
     <div class="dashboard-page__toolbar">
       <div class="dashboard-page__toolbar-group">
         <el-select
-          v-model="activeSnapshotKey"
-          placeholder="选择缓存结果"
+          v-model="currentRepoId"
+          placeholder="选择仓库"
           size="mini"
-          class="dashboard-page__snapshot-select"
-          :loading="loadingSnapshots"
-          @change="handleSnapshotChange"
+          class="dashboard-page__repo-select"
+          :loading="isInitializing"
+          @change="handleRepoChange"
         >
           <el-option
-            v-for="snapshot in cachedSnapshots"
-            :key="snapshotKey(snapshot)"
-            :label="formatSnapshotLabel(snapshot)"
-            :value="snapshotKey(snapshot)"
-          />
+            v-for="repo in availableRepos"
+            :key="repo.id"
+            :label="repo.name"
+            :value="repo.id"
+          >
+            <div class="repo-option">
+              <span class="repo-option__name">{{ repo.name }}</span>
+              <span v-if="getRepoCacheStatus(repo.id)" class="repo-option__cache">
+                <i class="el-icon-circle-check"></i>
+                {{ formatCacheTime(getRepoCacheStatus(repo.id).cachedAt) }}
+              </span>
+              <span v-else class="repo-option__no-cache">
+                <i class="el-icon-time"></i>
+                需要扫描
+              </span>
+            </div>
+          </el-option>
         </el-select>
-        <el-button size="mini" @click="reloadSnapshots" :loading="loadingSnapshots">
-          重载缓存
-        </el-button>
-        <el-button
-          size="mini"
-          type="warning"
-          :disabled="!cachedSnapshots.length"
-          @click="handleClearSnapshots"
+        
+        <el-button 
+          size="mini" 
+          @click="handleForceRefresh" 
+          :loading="isScanning"
+          :disabled="!currentRepoId"
         >
-          清空缓存
+          🔄 {{ isScanning ? '扫描中...' : '强制刷新' }}
         </el-button>
-      </div>
 
-      <div class="dashboard-page__toolbar-group">
-        <el-select
-          v-model="selectedProfileIds"
-          multiple
-          placeholder="选择需要刷新的仓库配置"
-          class="dashboard-page__profile-select"
+      <el-button
           size="mini"
+          type="info"
+          plain
+          @click="openMultiExportDialog"
+          :disabled="!hasData"
         >
-          <el-option
-            v-for="profile in repoProfiles"
-            :key="profile.id"
-            :label="profile.name"
-            :value="profile.id"
-          />
-        </el-select>
+          导出报表
+        </el-button>
+        
+        <!-- 新增：添加配置按钮 -->
         <el-button
-          type="primary"
-          size="mini"
-          :disabled="!selectedProfileIds.length"
-          :loading="loadingMatrix"
-          @click="handleRefresh"
-        >
-          刷新
-        </el-button>
-        <el-button size="mini" @click="triggerImport">
-          导入配置
-        </el-button>
-        <el-button
-          size="mini"
-          :disabled="!repoProfiles.length"
-          :loading="exportingProfiles"
-          @click="handleExportProfiles"
-        >
-          导出配置
-        </el-button>
-        <el-button
-          size="mini"
-          type="success"
-          :loading="syncingDefaults"
-          @click="handleSyncDefaults"
-        >
-          同步默认配置
-        </el-button>
-        <el-button
-          size="mini"
-          type="danger"
-          :disabled="!selectedProfileIds.length"
-          @click="handleDeleteProfiles"
-        >
-          删除配置
-        </el-button>
-                <el-button
           size="mini"
           type="primary"
           plain
-          @click="openMultiExportDialog"
+          @click="showAddConfigDialog"
         >
-          导出多仓报表
+          ➕ 添加配置
         </el-button>
-        <input
-          ref="fileInput"
-          type="file"
-          accept="application/json"
-          class="dashboard-page__file-input"
-          @change="handleImportFile"
-        />
       </div>
-      <div
-        v-if="profileBundleDescription"
-        class="dashboard-page__bundle-info"
-      >
-        {{ profileBundleDescription }}
+
+      <!-- 简化的状态信息 -->
+      <div v-if="currentRepoInfo" class="dashboard-page__repo-info">
+        <span class="repo-info__name">{{ currentRepoInfo.name }}</span>
+        <span class="repo-info__description">{{ currentRepoInfo.description }}</span>
+        <span v-if="lastScanTime" class="repo-info__scan-time">
+          最后扫描: {{ formatDateTime(lastScanTime) }}
+        </span>
       </div>
     </div>
 
+    <!-- 初始化状态 -->
     <el-alert
-      v-if="!cachedSnapshots.length"
-      title="暂无缓存，请导入配置并点击刷新执行一次全量扫描"
+      v-if="isInitializing"
+      title="正在初始化仓库配置..."
       type="info"
       :closable="false"
       class="dashboard-page__hint"
     />
 
-    <el-row :gutter="16" class="dashboard-page__summary">
+    <!-- 无数据提示 -->
+    <el-alert
+      v-else-if="!hasData && !isScanning"
+      title="暂无数据，请选择仓库或点击刷新"
+      type="info"
+      :closable="false"
+      class="dashboard-page__hint"
+    />
+
+    <!-- 统计概览 -->
+    <el-row v-if="hasData" :gutter="16" class="dashboard-page__summary">
       <el-col :span="6">
         <el-card>
           <div class="dashboard-page__metric">
@@ -150,9 +127,10 @@
       </el-col>
     </el-row>
 
+    <!-- 差异矩阵 -->
     <diff-matrix
       :data="displayedDiffMatrix"
-      :loading="loadingMatrix"
+      :loading="isScanning || isInitializing"
       @select="handleSelect"
     >
       <template #actions>
@@ -165,15 +143,98 @@
         />
       </template>
     </diff-matrix>
+
+    <!-- 多仓库导出对话框 -->
     <multi-repo-export-dialog
       :visible.sync="showMultiExportDialog"
     />
+
+    <!-- 新增：添加配置对话框 -->
+    <el-dialog 
+      title="添加仓库配置" 
+      :visible.sync="showAddConfig" 
+      width="600px"
+    >
+      <el-form ref="form" :model="newConfig" :rules="configRules" label-width="120px" size="mini">
+        <el-form-item label="配置名称" prop="name">
+          <el-input v-model="newConfig.name" placeholder="请输入配置名称" />
+        </el-form-item>
+        
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <el-form-item label="源仓库路径" prop="sourcePath">
+              <el-input v-model="newConfig.sourcePath" placeholder="源仓库绝对路径" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="目标仓库路径" prop="targetPath">
+              <el-input v-model="newConfig.targetPath" placeholder="目标仓库绝对路径" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <el-form-item label="源代码标识" prop="sourceCode">
+              <el-input v-model="newConfig.sourceCode" placeholder="如: oracle" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="目标代码标识" prop="targetCode">
+              <el-input v-model="newConfig.targetCode" placeholder="如: gauss" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        
+        <!-- 新增：时间范围配置 -->
+        <el-row :gutter="16">
+          <el-col :span="24">
+            <el-form-item label="扫描时间范围" prop="timeRange">
+              <el-date-picker
+                v-model="newConfig.timeRange"
+                type="datetimerange"
+                range-separator="至"
+                start-placeholder="开始时间"
+                end-placeholder="结束时间"
+                format="yyyy-MM-dd HH:mm:ss"
+                value-format="yyyy-MM-dd HH:mm:ss"
+                style="width: 100%"
+              />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        
+        <!-- 新增：扫描选项 -->
+        <el-row :gutter="16">
+          <el-col :span="24">
+            <el-form-item>
+              <el-checkbox v-model="newConfig.includeRemoteRefs">包含远程分支</el-checkbox>
+              <el-checkbox v-model="newConfig.includeTags">包含标签</el-checkbox>
+              <div style="margin-top: 8px">
+                <span style="margin-right: 8px">最大引用数:</span>
+                <el-input-number 
+                  v-model="newConfig.maxRefs" 
+                  :min="1" 
+                  :max="1000" 
+                  size="mini"
+                  style="width: 80px"
+                />
+              </div>
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
+      
+      <div slot="footer">
+        <el-button @click="showAddConfig = false">取消</el-button>
+        <el-button type="primary" @click="saveConfig" :loading="saving">保存</el-button>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script>
-import { mapState, mapActions, mapMutations, mapGetters } from 'vuex';
-import { downloadBlob } from '../utils/download';
+import { mapState, mapGetters } from 'vuex';
 import DiffMatrix from '../components/DiffMatrix.vue';
 import DiffMatrixFilters from '../components/DiffMatrixFilters.vue';
 import MultiRepoExportDialog from '../components/MultiRepoExportDialog.vue';
@@ -187,206 +248,109 @@ export default {
   },
   data() {
     return {
-      selectedProfileIds: [],
-      activeSnapshotKey: '',
-      syncingDefaults: false,
-      exportingProfiles: false,
       showMultiExportDialog: false,
+      showAddConfig: false,
+      saving: false,
+      newConfig: {
+        name: '',
+        sourcePath: '',
+        targetPath: '',
+        sourceCode: '',
+        targetCode: '',
+        timeRange: [],
+        includeRemoteRefs: true,
+        includeTags: false,
+        maxRefs: 256
+      },
+      configRules: {
+        name: [{ required: true, message: '请输入配置名称' }],
+        sourcePath: [{ required: true, message: '请输入源仓库路径' }],
+        targetPath: [{ required: true, message: '请输入目标仓库路径' }],
+        sourceCode: [{ required: true, message: '请输入源代码标识' }],
+        targetCode: [{ required: true, message: '请输入目标代码标识' }],
+        timeRange: [{ type: 'array', required: true, message: '请选择扫描时间范围' }]
+      }
     };
   },
   computed: {
+    // 简化的状态映射
     ...mapState('diff', [
+      'currentRepoId',
+      'availableRepos',
+      'isScanning',
+      'lastScanTime',
       'taskId',
       'summary',
-      'loadingMatrix',
       'overallCoverage',
-      'matrixFilters',
-      'repoProfiles',
-      'cachedSnapshots',
-      'loadingSnapshots',
-      'activeRepoId',
-      'profileBundleMeta',
       'diffMatrix',
+      'matrixFilters',
+      'repoDataCache',
     ]),
     ...mapGetters('diff', {
       displayedDiffMatrix: 'filteredDiffMatrix',
       availableFileExtensions: 'availableFileExtensions',
     }),
-    profileBundleDescription() {
-      const meta = this.profileBundleMeta || {};
-      const version = meta.version ? `版本 ${meta.version}` : '';
-      const timestamp = meta.generatedAt ? `更新时间 ${this.formatDateTime(meta.generatedAt)}` : '';
-      return [version, timestamp].filter(Boolean).join(' · ');
+    
+    // 当前仓库信息
+    currentRepoInfo() {
+      if (!this.currentRepoId || !this.availableRepos.length) {
+        return null;
+      }
+      return this.availableRepos.find(repo => repo.id === this.currentRepoId);
+    },
+    
+    // 是否有数据
+    hasData() {
+      return this.diffMatrix && this.diffMatrix.length > 0;
     },
   },
-  watch: {
-    activeRepoId: {
-      immediate: true,
-      handler(value) {
-        this.activeSnapshotKey = value || '';
-      },
-    },
-    repoProfiles: {
-      immediate: true,
-      handler(next) {
-        if (!this.selectedProfileIds.length && Array.isArray(next) && next.length) {
-          this.selectedProfileIds = next.map((item) => item.id);
-        }
-      },
-    },
-  },
-  created() {
-    this.initialize();
+  async created() {
+    await this.initializeDashboard();
   },
   methods: {
-    ...mapActions('diff', [
-      'loadProfiles',
-      'importProfiles',
-      'removeProfiles',
-      'scanProfiles',
-      'loadSnapshots',
-      'applySnapshot',
-      'clearSnapshots',
-      'syncDefaultProfiles',
-      'exportProfiles',
-    ]),
-    ...mapMutations('diff', ['setMatrixFilters', 'resetMatrixFilters']),
-    async initialize() {
-      await this.loadProfiles({ bootstrapDefaults: true });
-      await this.reloadSnapshots(true);
-    },
-    snapshotKey(snapshot) {
-      if (!snapshot) {
-        return '';
-      }
-      return snapshot.repoId || snapshot.taskId || '';
-    },
-    formatSnapshotLabel(snapshot) {
-      if (!snapshot) {
-        return '未知';
-      }
-      const name = snapshot.repoName || snapshot.response?.summary?.repoName || snapshot.repoId;
-      const task = snapshot.taskId ? snapshot.taskId.slice(0, 8) : '';
-      return task ? `${name || '未命名'} (${task})` : (name || '未命名');
-    },
-    async reloadSnapshots(autoApply = false) {
-      await this.loadSnapshots({
-        autoApply,
-        preferredRepoId: this.activeSnapshotKey,
-      });
-    },
-    handleSnapshotChange(repoId) {
-      const target = this.cachedSnapshots.find(
-        (item) => this.snapshotKey(item) === repoId,
-      );
-      if (target) {
-        this.applySnapshot(target);
-      }
-    },
-    triggerImport() {
-      if (this.$refs.fileInput) {
-        this.$refs.fileInput.value = '';
-        this.$refs.fileInput.click();
-      }
-    },
-    handleImportFile(event) {
-      const file = event.target.files && event.target.files[0];
-      if (!file) {
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = async () => {
-        try {
-          const payload = JSON.parse(reader.result);
-          const profiles = await this.importProfiles(payload);
-          this.selectedProfileIds = profiles.map((profile) => profile.id);
-          this.$message.success(`成功导入 ${profiles.length} 条配置`);
-        } catch (error) {
-          this.$message.error(error.message || '配置文件格式有误');
-        }
-      };
-      reader.readAsText(file);
-    },
-    async handleDeleteProfiles() {
-      if (!this.selectedProfileIds.length) {
-        return;
-      }
+    // 初始化仪表板
+    async initializeDashboard() {
+      this.isInitializing = true;
       try {
-        await this.$confirm('确定删除选中的仓库配置吗？', '提示', {
-          type: 'warning',
-        });
-        await this.removeProfiles(this.selectedProfileIds);
-        this.selectedProfileIds = [];
-        this.$message.success('已删除配置');
+        await this.$store.dispatch('diff/initializeRepoManagement');
       } catch (error) {
-        if (error !== 'cancel') {
-          this.$message.error(error.message || '删除失败');
-        }
-      }
-    },
-    async handleRefresh() {
-      if (!this.selectedProfileIds.length) {
-        this.$message.warning('请选择需要刷新的仓库配置');
-        return;
-      }
-      try {
-        await this.scanProfiles({ profileIds: this.selectedProfileIds });
-        await this.reloadSnapshots(true);
-        this.$message.success('全量扫描完成');
-      } catch (error) {
-        this.$message.error(error.message || '刷新失败');
-      }
-    },
-    async handleClearSnapshots() {
-      if (!this.cachedSnapshots.length) {
-        return;
-      }
-      try {
-        await this.$confirm('清空缓存后需要重新全量扫描，确定继续吗？', '提示', {
-          type: 'warning',
-        });
-        await this.clearSnapshots();
-        this.activeSnapshotKey = '';
-        this.$message.success('缓存已清空');
-      } catch (error) {
-        if (error !== 'cancel') {
-          this.$message.error(error.message || '清空失败');
-        }
-      }
-    },
-    async handleSyncDefaults() {
-      this.syncingDefaults = true;
-      try {
-        const profiles = await this.syncDefaultProfiles();
-        if (profiles.length) {
-          this.selectedProfileIds = profiles.map((profile) => profile.id);
-        }
-        this.$message.success('已同步默认配置');
-      } catch (error) {
-        this.$message.error(error.message || '同步失败');
+        console.error('初始化失败:', error);
+        this.$message.error(`初始化失败: ${error.message}`);
       } finally {
-        this.syncingDefaults = false;
+        this.isInitializing = false;
       }
     },
-    async handleExportProfiles() {
-      if (!this.repoProfiles.length) {
-        this.$message.warning('暂无配置可导出');
+    
+    // 仓库切换处理
+    async handleRepoChange(repoId) {
+      if (!repoId) return;
+      
+      try {
+        await this.$store.dispatch('diff/switchToRepo', repoId);
+        this.$message.success(`已切换到 ${this.currentRepoInfo?.name || repoId}`);
+      } catch (error) {
+        console.error('切换仓库失败:', error);
+        this.$message.error(`切换失败: ${error.message}`);
+      }
+    },
+    
+    // 强制刷新处理
+    async handleForceRefresh() {
+      if (!this.currentRepoId) {
+        this.$message.warning('请先选择仓库');
         return;
       }
-      this.exportingProfiles = true;
+      
       try {
-        const bundle = await this.exportProfiles();
-        const content = JSON.stringify(bundle, null, 2);
-        const filename = `repo-profiles-${bundle.version || Date.now()}.json`;
-        const blob = new Blob([content], { type: 'application/json;charset=utf-8' });
-        downloadBlob(blob, filename);
-        this.$message.success('配置已导出');
+        await this.$store.dispatch('diff/forceRefreshCurrentRepo');
+        this.$message.success('刷新完成');
       } catch (error) {
-        this.$message.error(error.message || '导出失败');
-      } finally {
-        this.exportingProfiles = false;
+        console.error('刷新失败:', error);
+        this.$message.error(`刷新失败: ${error.message}`);
       }
     },
+    
+    // 矩阵行选择处理
     handleSelect(row) {
       this.$router.push({
         name: 'FileDiff',
@@ -398,30 +362,149 @@ export default {
         },
       });
     },
+    
+    // 过滤器变化处理
+    handleFilterChange(filters) {
+      this.$store.commit('diff/setMatrixFilters', filters || {});
+    },
+    
+    // 重置过滤器
+    handleFilterReset() {
+      this.$store.commit('diff/resetMatrixFilters');
+    },
+    
+    // 打开多仓库导出对话框
+    openMultiExportDialog() {
+      this.showMultiExportDialog = true;
+    },
+    
+    // 新增：显示添加配置对话框
+    showAddConfigDialog() {
+      this.showAddConfig = true;
+    },
+    
+    // 新增：保存配置
+    async saveConfig() {
+      try {
+        await this.$refs.form.validate();
+        this.saving = true;
+        
+        // 解析时间范围
+        const [timeFrom, timeTo] = this.newConfig.timeRange || [];
+        
+        // 调用后端API保存配置
+        const response = await this.$http.post('/api/scan/add-preset', {
+          name: this.newConfig.name,
+          source: {
+            path: this.newConfig.sourcePath,
+            code: this.newConfig.sourceCode,
+            scanStrategy: 'SNAPSHOT',
+            timeFrom: timeFrom ? timeFrom.replace(' ', 'T') + '+08:00' : '2025-12-01T00:00:00+08:00',
+            timeTo: timeTo ? timeTo.replace(' ', 'T') + '+08:00' : '2025-12-31T23:59:59+08:00',
+            deltaType: 'DELTA_O',
+            includeWorkingTree: false,
+            fetchIfMissing: true,
+            remoteName: 'origin',
+            snapshotIncludeRemoteRefs: this.newConfig.includeRemoteRefs,
+            snapshotIncludeTags: this.newConfig.includeTags,
+            snapshotMaxRefs: this.newConfig.maxRefs
+          },
+          target: {
+            path: this.newConfig.targetPath,
+            code: this.newConfig.targetCode,
+            scanStrategy: 'SNAPSHOT',
+            timeFrom: timeFrom ? timeFrom.replace(' ', 'T') + '+08:00' : '2025-12-01T00:00:00+08:00',
+            timeTo: timeTo ? timeTo.replace(' ', 'T') + '+08:00' : '2025-12-31T23:59:59+08:00',
+            deltaType: 'DELTA_G',
+            includeWorkingTree: false,
+            fetchIfMissing: true,
+            remoteName: 'origin',
+            snapshotIncludeRemoteRefs: this.newConfig.includeRemoteRefs,
+            snapshotIncludeTags: this.newConfig.includeTags,
+            snapshotMaxRefs: this.newConfig.maxRefs
+          }
+        });
+        
+        if (response.data.status === 'success') {
+          this.$message.success('配置已保存，请重启后端服务生效');
+          this.showAddConfig = false;
+          this.resetConfigForm();
+          
+          // 刷新配置列表
+          await this.initializeDashboard();
+        } else {
+          this.$message.error('保存失败: ' + response.data.message);
+        }
+      } catch (error) {
+        this.$message.error('保存失败: ' + error.message);
+      } finally {
+        this.saving = false;
+      }
+    },
+    
+    // 新增：重置配置表单
+    resetConfigForm() {
+      this.newConfig = {
+        name: '',
+        sourcePath: '',
+        targetPath: '',
+        sourceCode: '',
+        targetCode: '',
+        timeRange: [],
+        includeRemoteRefs: true,
+        includeTags: false,
+        maxRefs: 256
+      };
+    },
+    
+    // 获取仓库缓存状态
+    getRepoCacheStatus(repoId) {
+      const cached = this.repoDataCache[repoId];
+      if (!cached) return null;
+      
+      return {
+        hasCache: true,
+        cachedAt: cached.cachedAt,
+        isCurrent: repoId === this.currentRepoId,
+      };
+    },
+    
+    // 格式化工具方法
     formatPercent(rate) {
       if (rate === undefined || rate === null || rate === '') {
         return '--';
       }
       return `${(Number(rate) * 100).toFixed(1)}%`;
     },
-    handleFilterChange(filters) {
-      this.setMatrixFilters(filters || {});
-    },
-    handleFilterReset() {
-      this.resetMatrixFilters();
-    },
-    openMultiExportDialog() {
-      this.showMultiExportDialog = true;
-    },
+    
     formatDateTime(value) {
-      if (!value) {
-        return '';
-      }
+      if (!value) return '';
       const date = new Date(value);
-      if (Number.isNaN(date.getTime())) {
-        return value;
-      }
+      if (Number.isNaN(date.getTime())) return value;
       return date.toLocaleString();
+    },
+    
+    formatCacheTime(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return '';
+      const now = new Date();
+      const diff = now - date;
+      
+      // 小于1小时
+      if (diff < 60 * 60 * 1000) {
+        const minutes = Math.floor(diff / (60 * 1000));
+        return `${minutes}分钟前`;
+      }
+      
+      // 小于24小时
+      if (diff < 24 * 60 * 60 * 1000) {
+        const hours = Math.floor(diff / (60 * 60 * 1000));
+        return `${hours}小时前`;
+      }
+      
+      // 大于24小时，显示日期
+      return date.toLocaleDateString();
     },
   },
 };
@@ -432,35 +515,69 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
+  padding: 16px;
+  background: #f8f9fa;
+  border-radius: 8px;
 }
 
 .dashboard-page__toolbar-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
-.dashboard-page__profile-select {
+.dashboard-page__repo-select {
   min-width: 280px;
 }
 
-.dashboard-page__snapshot-select {
-  min-width: 220px;
+.repo-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
 }
 
-.dashboard-page__file-input {
-  display: none;
+.repo-option__name {
+  font-weight: 500;
 }
 
-.dashboard-page__bundle-info {
+.repo-option__cache {
+  color: #67c23a;
   font-size: 12px;
+}
+
+.repo-option__no-cache {
+  color: #909399;
+  font-size: 12px;
+}
+
+.dashboard-page__repo-info {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 13px;
+  color: #606266;
+  flex-wrap: wrap;
+}
+
+.repo-info__name {
+  font-weight: 600;
+  color: #303133;
+}
+
+.repo-info__description {
   color: #909399;
 }
 
+.repo-info__scan-time {
+  color: #909399;
+  font-size: 12px;
+}
+
 .dashboard-page__hint {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .dashboard-page__summary {
@@ -471,6 +588,7 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  text-align: center;
 }
 
 .dashboard-page__metric-label {
@@ -482,5 +600,23 @@ export default {
   font-size: 24px;
   font-weight: 600;
   color: #303133;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .dashboard-page__toolbar-group {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .dashboard-page__repo-select {
+    width: 100%;
+  }
+  
+  .dashboard-page__repo-info {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
 }
 </style>

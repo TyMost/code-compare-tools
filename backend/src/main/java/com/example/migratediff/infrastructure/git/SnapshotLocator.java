@@ -38,7 +38,10 @@ public class SnapshotLocator {
         SnapshotLocatorOptions effectiveOptions = options != null ? options : SnapshotLocatorOptions.builder().build();
         List<Ref> refs = collectRefs(repository, effectiveOptions);
         if (refs.isEmpty()) {
-            throw new IllegalStateException("No refs available for snapshot scan");
+            String repoPath = repository.getDirectory() != null ? repository.getDirectory().getAbsolutePath() : "unknown";
+            LOGGER.error("No refs found in repository at: {}. This may indicate an uninitialized or empty repository.", repoPath);
+            LOGGER.error("Please ensure the repository has been properly initialized with commits using 'git init' and 'git commit'.");
+            throw new IllegalStateException("No refs available for snapshot scan. Repository at '" + repoPath + "' may not be properly initialized with any commits.");
         }
 
         return locateSequential(repository, refs, startTime, endTime, effectiveOptions);

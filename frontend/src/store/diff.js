@@ -339,13 +339,24 @@ function matchesExcludePatterns(filePath, patterns) {
 export default {
   namespaced: true,
   state: () => ({
+    // 简化的仓库管理
+    currentRepoId: '',
+    availableRepos: [],
+    repoDataCache: {}, // 仓库数据缓存 { repoId: { taskId, summary, diffMatrix, overallCoverage, cachedAt } }
+    
+    // 当前显示数据
     taskId: '',
     summary: defaultSummary(),
     overallCoverage: null,
     diffMatrix: [],
-    matrixFilters: defaultMatrixFilters(),
     currentFile: defaultCurrentFile(),
-    loadingMatrix: false,
+    
+    // 扫描状态
+    isScanning: false,
+    lastScanTime: null,
+    
+    // 过滤器和其他状态
+    matrixFilters: defaultMatrixFilters(),
     loadingDetail: false,
     loadingCommitHistory: false,
     migrating: false,
@@ -353,11 +364,13 @@ export default {
     availableTasks: [],
     loadingTasks: false,
     exportingReport: false,
-    repoProfiles: [],
-    selectedProfileIds: [],
+    
+    // 兼容性字段（保留现有组件使用）
     cachedSnapshots: [],
     loadingSnapshots: false,
     activeRepoId: '',
+    repoProfiles: [],
+    selectedProfileIds: [],
     profileBundleMeta: DEFAULT_BUNDLE_META(),
   }),
   mutations: {
@@ -462,6 +475,53 @@ export default {
     },
     setLoadingCommitHistory(state, flag) {
       state.loadingCommitHistory = flag;
+    },
+    // 新增的简化仓库管理 mutations
+    setCurrentRepoId(state, repoId) {
+      state.currentRepoId = repoId || '';
+      state.activeRepoId = repoId || ''; // 兼容性
+    },
+    setAvailableRepos(state, repos) {
+      state.availableRepos = Array.isArray(repos) ? [...repos] : [];
+    },
+    setRepoDataCache(state, { repoId, data }) {
+      if (!repoId || !data) return;
+      state.repoDataCache = {
+        ...state.repoDataCache,
+        [repoId]: {
+          ...data,
+          cachedAt: new Date().toISOString(),
+        },
+      };
+    },
+    clearRepoDataCache(state) {
+      state.repoDataCache = {};
+    },
+    setScanning(state, flag) {
+      state.isScanning = flag;
+      state.loadingMatrix = flag; // 兼容性
+    },
+    setLastScanTime(state, time) {
+      state.lastScanTime = time;
+    },
+    applyRepoData(state, repoId) {
+      const cached = state.repoDataCache[repoId];
+      if (!cached) {
+        // 清空当前数据
+        state.taskId = '';
+        state.summary = defaultSummary();
+        state.overallCoverage = null;
+        state.diffMatrix = [];
+        state.currentFile = defaultCurrentFile();
+        return;
+      }
+      
+      // 应用缓存数据到当前显示状态
+      state.taskId = cached.taskId || '';
+      state.summary = { ...defaultSummary(), ...cached.summary };
+      state.overallCoverage = cached.overallCoverage || null;
+      state.diffMatrix = Array.isArray(cached.diffMatrix) ? [...cached.diffMatrix] : [];
+      state.currentFile = defaultCurrentFile();
     },
   },
   getters: {
@@ -925,6 +985,214 @@ export default {
       } finally {
         commit('setLoadingCommitHistory', false);
       }
+    },
+
+    // ========== 新增的简化仓库管理 actions ==========
+
+    /**
+     * 初始化仓库管理：加载可用仓库列表和缓存数据
+     */
+    async initializeRepoManagement({ commit, dispatch }) {
+      try {
+        // 1. 加载默认仓库配置
+        const profiles = await dispatch('syncDefaultProfiles');
+        const repos = profiles.map(profile => ({
+          id: profile.id,
+          name: profile.name || profile.id,
+          presetName: profile.presetName,
+          description: `${profile.oracle?.repoPath} → ${profile.gauss?.repoPath}`,
+        }));
+        commit('setAvailableRepos', repos);
+
+        // 2. 加载缓存快照并更新仓库数据缓存
+        await dispatch('syncCacheToRepoData');
+
+        // 3. 如果有当前选中的仓库，应用其数据
+        if (repos.length > 0) {
+          const firstRepoId = repos[0].id;
+          commit('setCurrentRepoId', firstRepoId);
+          await dispatch('applyRepoData', firstRepoId);
+        }
+
+        return repos;
+      } catch (error) {
+        console.error('初始化仓库管理失败:', error);
+        throw error;
+      }
+    },
+
+    /**
+     * 核心方法：切换到指定仓库
+     */
+    async switchToRepo({ commit, dispatch, state }, repoId) {
+      if (!repoId) {
+        throw new Error('仓库ID不能为空');
+      }
+
+      commit('setCurrentRepoId', repoId);
+
+      try {
+        // 1. 检查本地缓存
+        const cachedData = state.repoDataCache[repoId];
+        if (cachedData) {
+          console.log(`使用缓存数据: ${repoId}`);
+          commit('applyRepoData', repoId);
+          return cachedData;
+        }
+
+        // 2. 检查后端缓存快照
+        const snapshot = await dispatch('findSnapshotForRepo', repoId);
+        if (snapshot) {
+          console.log(`使用后端缓存: ${repoId}`);
+          await dispatch('applySnapshotToCache', { repoId, snapshot });
+          commit('applyRepoData', repoId);
+          return state.repoDataCache[repoId];
+        }
+
+        // 3. 无缓存：自动扫描
+        console.log(`无缓存，开始扫描: ${repoId}`);
+        await dispatch('scanAndCacheRepo', repoId);
+        commit('applyRepoData', repoId);
+        return state.repoDataCache[repoId];
+
+      } catch (error) {
+        console.error(`切换仓库失败: ${repoId}`, error);
+        throw error;
+      }
+    },
+
+    /**
+     * 强制刷新当前仓库
+     */
+    async forceRefreshCurrentRepo({ dispatch, state }) {
+      if (!state.currentRepoId) {
+        throw new Error('没有选中的仓库');
+      }
+      return await dispatch('scanAndCacheRepo', state.currentRepoId);
+    },
+
+    /**
+     * 同步后端缓存到本地仓库数据缓存
+     */
+    async syncCacheToRepoData({ commit, dispatch, state }) {
+      try {
+        const snapshots = await fetchScanCacheRequest();
+        if (!Array.isArray(snapshots)) return;
+
+        for (const snapshot of snapshots) {
+          const repoId = snapshot.repoId || snapshot.taskId;
+          if (repoId && snapshot.response) {
+            await dispatch('applySnapshotToCache', { repoId, snapshot });
+          }
+        }
+      } catch (error) {
+        console.warn('同步缓存失败:', error);
+      }
+    },
+
+    /**
+     * 查找指定仓库的缓存快照
+     */
+    async findSnapshotForRepo({ state }, repoId) {
+      try {
+        const snapshots = await fetchScanCacheRequest();
+        return snapshots.find(snapshot => 
+          snapshot.repoId === repoId || snapshot.taskId === repoId
+        );
+      } catch (error) {
+        console.warn('查找快照失败:', error);
+        return null;
+      }
+    },
+
+    /**
+     * 将快照应用到本地缓存
+     */
+    async applySnapshotToCache({ commit }, { repoId, snapshot }) {
+      const response = snapshot.response;
+      const cacheData = {
+        taskId: response.taskId || snapshot.taskId,
+        summary: response.summary || {},
+        diffMatrix: response.diffMatrix || [],
+        overallCoverage: response.overallCoverage || response.summary?.overallCoverage,
+      };
+      commit('setRepoDataCache', { repoId, data: cacheData });
+    },
+
+    /**
+     * 扫描指定仓库并缓存结果
+     */
+    async scanAndCacheRepo({ commit, dispatch, state }, repoId) {
+      commit('setScanning', true);
+      try {
+        // 获取仓库配置
+        const repo = state.availableRepos.find(r => r.id === repoId);
+        if (!repo) {
+          throw new Error(`找不到仓库配置: ${repoId}`);
+        }
+
+        // 执行扫描
+        const response = await scanFullRequest({
+          presetName: repo.presetName || repoId,
+          persistResult: true,
+          taskId: createTaskId(),
+        });
+
+        // 缓存结果
+        const cacheData = {
+          taskId: response.taskId,
+          summary: response.summary || {},
+          diffMatrix: response.diffMatrix || [],
+          overallCoverage: response.overallCoverage || response.summary?.overallCoverage,
+        };
+        commit('setRepoDataCache', { repoId, data: cacheData });
+        commit('setLastScanTime', new Date().toISOString());
+
+        return response;
+      } finally {
+        commit('setScanning', false);
+      }
+    },
+
+    /**
+     * 应用仓库数据到当前显示状态
+     */
+    applyRepoData({ commit, state }, repoId) {
+      commit('applyRepoData', repoId);
+      
+      // 同步更新兼容性字段
+      const cached = state.repoDataCache[repoId];
+      if (cached) {
+        commit('setActiveRepoId', repoId);
+        commit('setTaskId', cached.taskId);
+      }
+    },
+
+    /**
+     * 清空所有仓库数据缓存
+     */
+    clearAllRepoCache({ commit }) {
+      commit('clearRepoDataCache');
+      commit('setCurrentRepoId', '');
+      commit('setActiveRepoId', '');
+      commit('setTaskId', '');
+      commit('setSummary', defaultSummary());
+      commit('setOverallCoverage', null);
+      commit('setDiffMatrix', []);
+      commit('setCurrentFile', defaultCurrentFile());
+    },
+
+    /**
+     * 获取仓库缓存状态信息
+     */
+    getRepoCacheStatus({ state }) {
+      return state.availableRepos.map(repo => ({
+        id: repo.id,
+        name: repo.name,
+        hasCache: !!state.repoDataCache[repo.id],
+        cachedAt: state.repoDataCache[repo.id]?.cachedAt,
+        isCurrent: repo.id === state.currentRepoId,
+      }));
     },
   },
 };

@@ -44,6 +44,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
@@ -140,6 +141,71 @@ public class ScanController {
     @GetMapping("/presets")
     public ApiResponse<?> listPresets() {
         return ApiResponse.success(scanMapper.toPresetDTOs(presetProperties.getPresets()));
+    }
+
+    /**
+     * 动态添加配置到预设列表
+     */
+    @PostMapping("/add-preset")
+    public ApiResponse<?> addPreset(@RequestBody Map<String, Object> request) {
+        try {
+            String name = (String) request.get("name");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> source = (Map<String, Object>) request.get("source");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> target = (Map<String, Object>) request.get("target");
+            
+            // 创建新的预设
+            ScanPresetProperties.ScanPreset newPreset = new ScanPresetProperties.ScanPreset();
+            newPreset.setName(name);
+            
+            // 设置源仓库配置
+            ScanPresetProperties.RepoPreset sourcePreset = new ScanPresetProperties.RepoPreset();
+            sourcePreset.setCode((String) source.get("code"));
+            sourcePreset.setPath((String) source.get("path"));
+            sourcePreset.setScanStrategy("SNAPSHOT");
+            sourcePreset.setTimeFrom((String) source.get("timeFrom"));
+            sourcePreset.setTimeTo((String) source.get("timeTo"));
+            sourcePreset.setDeltaType("DELTA_O");
+            sourcePreset.setIncludeWorkingTree(false);
+            sourcePreset.setFetchIfMissing(true);
+            sourcePreset.setRemoteName("origin");
+            // 新增：处理快照选项
+            sourcePreset.setSnapshotIncludeRemoteRefs(Boolean.TRUE.equals(source.get("snapshotIncludeRemoteRefs")));
+            sourcePreset.setSnapshotIncludeTags(Boolean.TRUE.equals(source.get("snapshotIncludeTags")));
+            sourcePreset.setSnapshotMaxRefs((Integer) source.getOrDefault("snapshotMaxRefs", 256));
+            newPreset.setSource(sourcePreset);
+            
+            // 设置目标仓库配置
+            ScanPresetProperties.RepoPreset targetPreset = new ScanPresetProperties.RepoPreset();
+            targetPreset.setCode((String) target.get("code"));
+            targetPreset.setPath((String) target.get("path"));
+            targetPreset.setScanStrategy("SNAPSHOT");
+            targetPreset.setTimeFrom((String) target.get("timeFrom"));
+            targetPreset.setTimeTo((String) target.get("timeTo"));
+            targetPreset.setDeltaType("DELTA_G");
+            targetPreset.setIncludeWorkingTree(false);
+            targetPreset.setFetchIfMissing(true);
+            targetPreset.setRemoteName("origin");
+            // 新增：处理快照选项
+            targetPreset.setSnapshotIncludeRemoteRefs(Boolean.TRUE.equals(target.get("snapshotIncludeRemoteRefs")));
+            targetPreset.setSnapshotIncludeTags(Boolean.TRUE.equals(target.get("snapshotIncludeTags")));
+            targetPreset.setSnapshotMaxRefs((Integer) target.getOrDefault("snapshotMaxRefs", 256));
+            newPreset.setTarget(targetPreset);
+            
+            // 追加到预设列表
+            List<ScanPresetProperties.ScanPreset> currentPresets = new ArrayList<>(presetProperties.getPresets());
+            currentPresets.add(newPreset);
+            presetProperties.setPresets(currentPresets);
+            
+            log.info("成功添加新预设: {} (时间范围: {} 至 {})", 
+                name, source.get("timeFrom"), source.get("timeTo"));
+            return ApiResponse.success("配置已添加，请重启后端服务使配置生效", null);
+            
+        } catch (Exception e) {
+            log.error("添加配置失败", e);
+            return ApiResponse.success("添加配置失败: " + e.getMessage(), null);
+        }
     }
 
     @GetMapping("/tasks")
