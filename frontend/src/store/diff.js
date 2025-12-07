@@ -45,6 +45,10 @@ const defaultMatrixFilters = () => ({
   fileExtensions: [],
   excludeTestFiles: false,
   excludePatterns: [],
+  includeCommitInfo: false,
+  authorFilters: [],
+  authorTypeFilter: '',
+  timeRange: [],
 });
 
 const defaultCurrentFile = () => ({
@@ -94,6 +98,11 @@ function buildExportFilters(source = {}) {
     fileExtensions: Array.isArray(source.fileExtensions) ? [...source.fileExtensions] : [],
     excludeTestFiles: source.excludeTestFiles === undefined ? false : !!source.excludeTestFiles,
     excludePatterns: Array.isArray(source.excludePatterns) ? [...source.excludePatterns] : [],
+    includeCommitInfo: source.includeCommitInfo === undefined ? false : !!source.includeCommitInfo,
+    authorFilters: Array.isArray(source.authorFilters) ? [...source.authorFilters] : [],
+    authorTypeFilter: source.authorTypeFilter || '',
+    timeFrom: source.timeFrom || null,
+    timeTo: source.timeTo || null,
   };
 }
 
@@ -355,6 +364,15 @@ export default {
     isScanning: false,
     lastScanTime: null,
     
+    // 批量刷新状态
+    batchRefreshing: false,
+    batchRefreshProgress: {
+      current: 0,
+      total: 0,
+      currentRepo: '',
+      errors: []
+    },
+    
     // 过滤器和其他状态
     matrixFilters: defaultMatrixFilters(),
     loadingDetail: false,
@@ -364,6 +382,13 @@ export default {
     availableTasks: [],
     loadingTasks: false,
     exportingReport: false,
+    exportProgress: {
+      stage: '',
+      message: '',
+      current: 0,
+      total: 0,
+      percentage: 0,
+    },
     
     // 兼容性字段（保留现有组件使用）
     cachedSnapshots: [],
@@ -410,6 +435,18 @@ export default {
         excludePatterns: Array.isArray(payload.excludePatterns) 
           ? [...payload.excludePatterns] 
           : state.matrixFilters.excludePatterns,
+        includeCommitInfo: payload.includeCommitInfo === undefined 
+          ? state.matrixFilters.includeCommitInfo 
+          : !!payload.includeCommitInfo,
+        authorFilters: Array.isArray(payload.authorFilters) 
+          ? [...payload.authorFilters] 
+          : state.matrixFilters.authorFilters,
+        authorTypeFilter: payload.authorTypeFilter === undefined 
+          ? state.matrixFilters.authorTypeFilter 
+          : payload.authorTypeFilter,
+        timeRange: Array.isArray(payload.timeRange) 
+          ? [...payload.timeRange] 
+          : state.matrixFilters.timeRange,
       };
     },
     resetMatrixFilters(state) {
@@ -522,6 +559,37 @@ export default {
       state.overallCoverage = cached.overallCoverage || null;
       state.diffMatrix = Array.isArray(cached.diffMatrix) ? [...cached.diffMatrix] : [];
       state.currentFile = defaultCurrentFile();
+    },
+    // 批量刷新相关 mutations
+    setBatchRefreshing(state, flag) {
+      state.batchRefreshing = flag;
+    },
+    setBatchRefreshProgress(state, progress) {
+      state.batchRefreshProgress = {
+        ...state.batchRefreshProgress,
+        ...progress,
+      };
+    },
+    addBatchError(state, error) {
+      state.batchRefreshProgress.errors.push(error);
+    },
+    clearBatchErrors(state) {
+      state.batchRefreshProgress.errors = [];
+    },
+    setExportProgress(state, progress) {
+      state.exportProgress = {
+        ...state.exportProgress,
+        ...progress,
+      };
+    },
+    resetExportProgress(state) {
+      state.exportProgress = {
+        stage: '',
+        message: '',
+        current: 0,
+        total: 0,
+        percentage: 0,
+      };
     },
   },
   getters: {
@@ -911,6 +979,11 @@ export default {
           fileExtensions: exportFilters.fileExtensions,
           excludeTestFiles: exportFilters.excludeTestFiles,
           excludePatterns: exportFilters.excludePatterns,
+          includeCommitInfo: exportFilters.includeCommitInfo,
+          authorFilters: exportFilters.authorFilters,
+          authorTypeFilter: exportFilters.authorTypeFilter,
+          timeFrom: exportFilters.timeFrom,
+          timeTo: exportFilters.timeTo,
           format,
         };
         
@@ -1069,6 +1142,84 @@ export default {
         throw new Error('没有选中的仓库');
       }
       return await dispatch('scanAndCacheRepo', state.currentRepoId);
+    },
+
+    /**
+     * 强制刷新所有仓库
+     */
+    async forceRefreshAllRepos({ commit, dispatch, state }) {
+      if (!state.availableRepos.length) {
+        throw new Error('没有可用的仓库配置');
+      }
+
+      commit('setBatchRefreshing', true);
+      commit('clearBatchErrors');
+      
+      const repos = [...state.availableRepos];
+      const success = [];
+      const errors = [];
+
+      try {
+        // 初始化进度
+        commit('setBatchRefreshProgress', {
+          current: 0,
+          total: repos.length,
+          currentRepo: '',
+          errors: [],
+        });
+
+        // 串行刷新每个仓库
+        for (let i = 0; i < repos.length; i++) {
+          const repo = repos[i];
+          
+          // 更新进度
+          commit('setBatchRefreshProgress', {
+            current: i,
+            total: repos.length,
+            currentRepo: repo.name,
+            errors: state.batchRefreshProgress.errors,
+          });
+
+          try {
+            await dispatch('scanAndCacheRepo', repo.id);
+            success.push(repo);
+            console.log(`仓库刷新成功: ${repo.name} (${i + 1}/${repos.length})`);
+          } catch (error) {
+            const errorInfo = {
+              repo: repo.name,
+              repoId: repo.id,
+              error: error.message || error.toString(),
+            };
+            errors.push(errorInfo);
+            commit('addBatchError', errorInfo);
+            console.error(`仓库刷新失败: ${repo.name}`, error);
+          }
+        }
+
+        // 完成进度
+        commit('setBatchRefreshProgress', {
+          current: repos.length,
+          total: repos.length,
+          currentRepo: '',
+          errors: state.batchRefreshProgress.errors,
+        });
+
+        // 应用最后一个成功的仓库数据（如果有的话）
+        if (success.length > 0) {
+          const lastSuccessRepo = success[success.length - 1];
+          commit('setCurrentRepoId', lastSuccessRepo.id);
+          commit('applyRepoData', lastSuccessRepo.id);
+        }
+
+        return {
+          success,
+          errors,
+          total: repos.length,
+        };
+
+      } finally {
+        commit('setBatchRefreshing', false);
+      }
     },
 
     /**

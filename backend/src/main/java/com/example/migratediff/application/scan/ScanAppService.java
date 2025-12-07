@@ -4,7 +4,9 @@ import com.example.migratediff.application.CoverageAppService;
 import com.example.migratediff.application.DiffAppService;
 import com.example.migratediff.application.GenerateAppService;
 import com.example.migratediff.application.MigrationAppService;
+import com.example.migratediff.domain.coverage.BlockMapping;
 import com.example.migratediff.domain.coverage.CoverageDetail;
+import com.example.migratediff.domain.coverage.CoverageEvaluator;
 import com.example.migratediff.domain.coverage.CoverageSummary;
 import com.example.migratediff.domain.diff.DeltaGroup;
 import com.example.migratediff.domain.diff.DiffBlock;
@@ -37,6 +39,7 @@ public class ScanAppService {
     private final GenerateAppService generateAppService;
     private final MigrationAppService migrationAppService;
     private final ScanResultStore scanResultStore;
+    private final CoverageEvaluator coverageEvaluator;
     private final ConcurrentMap<MigrationKey, String> migrationTaskIndex = new ConcurrentHashMap<>();
     private final ScanReportRepository scanReportRepository;
     private final SecureRandom secureRandom = new SecureRandom();
@@ -53,6 +56,8 @@ public class ScanAppService {
         this.migrationAppService = migrationAppService;
         this.scanResultStore = scanResultStore;
         this.scanReportRepository = scanReportRepository;
+        // 从CoverageAppService获取CoverageEvaluator
+        this.coverageEvaluator = coverageAppService.getCoverageEvaluator();
     }
 
     /**
@@ -93,6 +98,16 @@ public class ScanAppService {
         String normalizedPath = normalizeFilePath(filePath);
         return resolveReport(taskId)
                 .flatMap(report -> buildDetail(report, normalizedPath));
+    }
+
+    /**
+     * 获取文件的块映射关系
+     */
+    public BlockMapping getBlockMapping(DiffDetail detail) {
+        if (detail == null) {
+            return null;
+        }
+        return coverageEvaluator.getBlockMapping(detail.getOracleFile(), detail.getGaussFile());
     }
 
     public MigrationOperationResult generateMigration(String taskId, String filePath) {

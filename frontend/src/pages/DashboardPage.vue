@@ -31,14 +31,27 @@
           </el-option>
         </el-select>
         
-        <el-button 
-          size="mini" 
-          @click="handleForceRefresh" 
-          :loading="isScanning"
-          :disabled="!currentRepoId"
-        >
-          🔄 {{ isScanning ? '扫描中...' : '强制刷新' }}
-        </el-button>
+        <!-- 下拉菜单式刷新按钮 -->
+        <el-dropdown @command="handleRefreshCommand" :disabled="!currentRepoId">
+          <el-button 
+            size="mini" 
+            :loading="isScanning || batchRefreshing"
+            :disabled="!currentRepoId"
+          >
+            🔄 {{ isScanning || batchRefreshing ? '刷新中...' : '刷新' }}
+            <i class="el-icon-arrow-down el-icon--right"></i>
+          </el-button>
+          <el-dropdown-menu slot="dropdown">
+            <el-dropdown-item command="current" :disabled="!currentRepoId">
+              <i class="el-icon-refresh"></i>
+              刷新当前仓库
+            </el-dropdown-item>
+            <el-dropdown-item command="all" divided>
+              <i class="el-icon-refresh"></i>
+              刷新所有仓库
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </el-dropdown>
 
       <el-button
           size="mini"
@@ -82,12 +95,46 @@
 
     <!-- 无数据提示 -->
     <el-alert
-      v-else-if="!hasData && !isScanning"
+      v-else-if="!hasData && !isScanning && !batchRefreshing"
       title="暂无数据，请选择仓库或点击刷新"
       type="info"
       :closable="false"
       class="dashboard-page__hint"
     />
+
+    <!-- 批量刷新进度 -->
+    <el-alert
+      v-if="batchRefreshing"
+      title="正在批量刷新仓库..."
+      type="info"
+      :closable="false"
+      class="dashboard-page__batch-progress"
+    >
+      <div class="batch-progress-content">
+        <div class="batch-progress-bar">
+          <el-progress 
+            :percentage="batchProgressPercentage" 
+          />
+        </div>
+        <div class="batch-progress-text">
+          {{ batchRefreshProgress.currentRepo }} ({{ batchRefreshProgress.current }}/{{ batchRefreshProgress.total }})
+        </div>
+      </div>
+      
+      <!-- 错误信息 -->
+      <div v-if="batchRefreshProgress.errors.length > 0" class="batch-errors">
+        <div class="error-title">刷新失败：</div>
+        <div class="error-list">
+          <div 
+            v-for="error in batchRefreshProgress.errors" 
+            :key="error.repoId"
+            class="error-item"
+          >
+            <strong>{{ error.repo }}:</strong> {{ error.error }}
+          </div>
+        </div>
+      </div>
+    </el-alert>
 
     <!-- 统计概览 -->
     <el-row v-if="hasData" :gutter="16" class="dashboard-page__summary">
@@ -130,7 +177,7 @@
     <!-- 差异矩阵 -->
     <diff-matrix
       :data="displayedDiffMatrix"
-      :loading="isScanning || isInitializing"
+      :loading="isScanning || isInitializing || batchRefreshing"
       @select="handleSelect"
     >
       <template #actions>
@@ -248,6 +295,7 @@ export default {
   },
   data() {
     return {
+      isInitializing: false, // 添加本地初始化状态
       showMultiExportDialog: false,
       showAddConfig: false,
       saving: false,
@@ -285,6 +333,8 @@ export default {
       'diffMatrix',
       'matrixFilters',
       'repoDataCache',
+      'batchRefreshing',
+      'batchRefreshProgress',
     ]),
     ...mapGetters('diff', {
       displayedDiffMatrix: 'filteredDiffMatrix',
@@ -302,6 +352,12 @@ export default {
     // 是否有数据
     hasData() {
       return this.diffMatrix && this.diffMatrix.length > 0;
+    },
+    
+    // 批量刷新进度百分比
+    batchProgressPercentage() {
+      if (!this.batchRefreshProgress.total) return 0;
+      return Math.round((this.batchRefreshProgress.current / this.batchRefreshProgress.total) * 100);
     },
   },
   async created() {
@@ -334,7 +390,16 @@ export default {
       }
     },
     
-    // 强制刷新处理
+    // 刷新命令处理
+    async handleRefreshCommand(command) {
+      if (command === 'current') {
+        await this.handleForceRefresh();
+      } else if (command === 'all') {
+        await this.handleBatchRefresh();
+      }
+    },
+    
+    // 强制刷新当前仓库
     async handleForceRefresh() {
       if (!this.currentRepoId) {
         this.$message.warning('请先选择仓库');
@@ -350,17 +415,73 @@ export default {
       }
     },
     
+    // 批量刷新所有仓库
+    async handleBatchRefresh() {
+      if (!this.availableRepos.length) {
+        this.$message.warning('没有可用的仓库配置');
+        return;
+      }
+      
+      try {
+        const result = await this.$store.dispatch('diff/forceRefreshAllRepos');
+        
+        // 显示结果
+        const successCount = result.success.length;
+        const errorCount = result.errors.length;
+        
+        if (errorCount === 0) {
+          this.$message.success(`成功刷新 ${successCount} 个仓库`);
+        } else {
+          this.$message.warning(`刷新完成：${successCount} 个成功，${errorCount} 个失败`);
+        }
+      } catch (error) {
+        console.error('批量刷新失败:', error);
+        this.$message.error(`批量刷新失败: ${error.message}`);
+      }
+    },
+    
     // 矩阵行选择处理
-    handleSelect(row) {
+    handleSelect(row = {}) {
+      console.log('[DashboardPage] handleSelect called:', {
+        row,
+        taskId: this.taskId,
+        currentRepoId: this.currentRepoId,
+        hasData: this.hasData
+      });
+      
+      if (!this.taskId) {
+        console.warn('[DashboardPage] No taskId available');
+        this.$message.warning('请先选择仓库或执行扫描');
+        return;
+      }
+      
+      const normalizedPath = typeof row.filePath === 'string' ? row.filePath.trim() : '';
+      if (!normalizedPath) {
+        console.error('[DashboardPage] File path is missing:', row);
+        this.$message.error('文件路径缺失，请刷新数据后重试');
+        return;
+      }
+      
+      const routeQuery = this.buildDiffRouteQuery(row, normalizedPath);
+      console.log('[DashboardPage] Navigating to FileDiff with query:', routeQuery);
+      
+      this.$message.info('正在加载文件详情...');
+      
       this.$router.push({
         name: 'FileDiff',
-        query: {
-          taskId: this.taskId,
-          filePath: row.filePath,
-          oracleDelta: row.oracleDelta,
-          gaussDelta: row.gaussDelta,
-        },
+        query: routeQuery,
       });
+    },
+    
+    buildDiffRouteQuery(row, filePath) {
+      const query = {
+        taskId: this.taskId,
+        filePath,
+        oracleDelta: row?.oracleDelta || '',
+        gaussDelta: row?.gaussDelta || '',
+      };
+      console.log('[DashboardPage] Built route query:', query);
+      return query;
     },
     
     // 过滤器变化处理
@@ -578,6 +699,53 @@ export default {
 
 .dashboard-page__hint {
   margin-bottom: 16px;
+}
+
+.dashboard-page__batch-progress {
+  margin-bottom: 16px;
+}
+
+.batch-progress-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.batch-progress-bar {
+  margin-bottom: 8px;
+}
+
+.batch-progress-text {
+  font-size: 14px;
+  color: #606266;
+  text-align: center;
+}
+
+.batch-errors {
+  margin-top: 16px;
+  border-top: 1px solid #f56c6c;
+  padding-top: 12px;
+}
+
+.error-title {
+  font-weight: 600;
+  color: #f56c6c;
+  margin-bottom: 8px;
+}
+
+.error-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.error-item {
+  padding: 8px;
+  background: #fef0f0;
+  border: 1px solid #f56c6c;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .dashboard-page__summary {

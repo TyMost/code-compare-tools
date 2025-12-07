@@ -127,7 +127,7 @@ public final class CoverageUtils {
      * @param content the code content
      * @return filtered content
      */
-    private static String filterCodeNoise(String content) {
+    public static String filterCodeNoise(String content) {
         String[] lines = content.split("\\r?\\n");
         StringBuilder filtered = new StringBuilder();
         boolean inMultiLineComment = false;
@@ -149,6 +149,7 @@ public final class CoverageUtils {
             // Skip single-line comments, imports, and javadoc lines
             if (trimmed.startsWith("//") || 
                 trimmed.startsWith("import ") || 
+                trimmed.startsWith("package ") || 
                 trimmed.startsWith("*") ||
                 trimmed.startsWith("/**")) {
                 continue;

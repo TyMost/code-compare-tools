@@ -10,6 +10,7 @@ import com.example.migratediff.api.dto.ScanTaskSummaryDTO;
 import com.example.migratediff.api.mapper.ScanMapper;
 import com.example.migratediff.application.commit.GitCommitHistoryService;
 import com.example.migratediff.application.scan.CsvMultiRepoReportWriter;
+import com.example.migratediff.application.scan.ExcelMultiRepoReportWriter;
 import com.example.migratediff.application.scan.DiffDetail;
 import com.example.migratediff.application.scan.DiffMatrixFilterCriteria;
 import com.example.migratediff.application.scan.MultiRepoExportRequest;
@@ -22,6 +23,9 @@ import com.example.migratediff.application.scan.ScanPresetProperties;
 import com.example.migratediff.application.scan.ScanReport;
 import com.example.migratediff.application.scan.ScanResultStore;
 import com.example.migratediff.application.scan.ScanSnapshotService;
+import com.example.migratediff.application.scan.AsyncExportTaskService;
+import com.example.migratediff.application.scan.ExportTask;
+import com.example.migratediff.domain.coverage.BlockMapping;
 import com.example.migratediff.shared.exception.NotFoundException;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.util.StringUtils;
@@ -32,9 +36,11 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import lombok.extern.slf4j.Slf4j;
@@ -63,8 +69,10 @@ public class ScanController {
     private final ScanResultStore scanResultStore;
     private final MultiRepoExportService multiRepoExportService;
     private final CsvMultiRepoReportWriter csvReportWriter;
+    private final ExcelMultiRepoReportWriter excelReportWriter;
     private final ScanSnapshotService scanSnapshotService;
     private final GitCommitHistoryService gitCommitHistoryService;
+    private final AsyncExportTaskService asyncExportTaskService;
 
     public ScanController(ScanAppService scanAppService,
                           ScanMapper scanMapper,
@@ -72,16 +80,20 @@ public class ScanController {
                            ScanResultStore scanResultStore,
                            MultiRepoExportService multiRepoExportService,
                            CsvMultiRepoReportWriter csvReportWriter,
+                           ExcelMultiRepoReportWriter excelReportWriter,
                            ScanSnapshotService scanSnapshotService,
-                           GitCommitHistoryService gitCommitHistoryService) {
+                           GitCommitHistoryService gitCommitHistoryService,
+                           AsyncExportTaskService asyncExportTaskService) {
         this.scanAppService = scanAppService;
         this.scanMapper = scanMapper;
         this.presetProperties = presetProperties;
         this.scanResultStore = scanResultStore;
         this.multiRepoExportService = multiRepoExportService;
         this.csvReportWriter = csvReportWriter;
+        this.excelReportWriter = excelReportWriter;
         this.scanSnapshotService = scanSnapshotService;
         this.gitCommitHistoryService = gitCommitHistoryService;
+        this.asyncExportTaskService = asyncExportTaskService;
     }
 
     @PostMapping("/full")
@@ -107,6 +119,18 @@ public class ScanController {
         String migrationDiff = scanAppService.generateMigrationTemplate(detail);
         return ApiResponse.success(scanMapper.toDetailResponse(detail, migrationDiff));
     }
+
+    /**
+     * 获取文件的块映射关系
+     */
+    @PostMapping("/block-mapping")
+    public ApiResponse<?> getBlockMapping(@Valid @RequestBody DiffDetailRequestDTO requestDTO) {
+        DiffDetail detail = scanAppService.fetchDetail(requestDTO.getTaskId(), requestDTO.getFilePath())
+                .orElseThrow(() -> new NotFoundException("Failed to locate scan record for file: " + requestDTO.getFilePath()));
+        BlockMapping blockMapping = scanAppService.getBlockMapping(detail);
+        return ApiResponse.success(blockMapping);
+    }
+
 
     @PostMapping("/commit-history")
     public ApiResponse<?> getCommitHistory(@Valid @RequestBody DiffDetailRequestDTO requestDTO) {
@@ -204,7 +228,7 @@ public class ScanController {
             
         } catch (Exception e) {
             log.error("添加配置失败", e);
-            return ApiResponse.success("添加配置失败: " + e.getMessage(), null);
+            return ApiResponse.<Object>error("添加配置失败: " + e.getMessage());
         }
     }
 
@@ -242,23 +266,29 @@ public class ScanController {
         log.debug("转换后的请求: repos={}, format={}", 
             request.getRepos().size(), request.getFormat());
         
-        if (!"csv".equals(request.getFormat())) {
-            log.warn("不支持的导出格式: {}", request.getFormat());
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "目前仅支持CSV 格式导出");
-        }
-        
         try {
             MultiRepoExportResult result = multiRepoExportService.export(request);
             log.info("多仓库导出完成: 生成文件，仓库数量={}", result.getRepoReports().size());
             
-            byte[] bytes = csvReportWriter.write(result);
+            byte[] bytes;
+            MediaType contentType;
+            
+            if ("excel".equals(request.getFormat())) {
+                bytes = excelReportWriter.write(result);
+                contentType = excelReportWriter.contentType();
+            } else {
+                // 默认使用CSV格式
+                bytes = csvReportWriter.write(result);
+                contentType = csvReportWriter.contentType();
+            }
+            
             ByteArrayResource resource = new ByteArrayResource(bytes);
             String filename = buildFileName(request.getFormat(), result);
             
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
                     .contentLength(bytes.length)
-                    .contentType(csvReportWriter.contentType())
+                    .contentType(contentType)
                     .body(resource);
         } catch (Exception e) {
             log.error("多仓库导出失败: {}", e.getMessage(), e);
@@ -275,6 +305,8 @@ public class ScanController {
                 .fileExtensions(normalizeFileExtensions(requestDTO.getFileExtensions()))
                 .excludeTestFiles(requestDTO.isExcludeTestFiles())
                 .excludePatterns(normalizeExcludePatterns(requestDTO.getExcludePatterns()))
+                .includeCommitInfo(requestDTO.isIncludeCommitInfo())
+                .authorTypeFilter(requestDTO.getAuthorTypeFilter())
                 .build();
         List<MultiRepoExportRequest.RepoSelection> selections = requestDTO.getRepos().stream()
                 .map(repo -> MultiRepoExportRequest.RepoSelection.builder()
@@ -331,5 +363,186 @@ public class ScanController {
     private String buildFileName(String format, MultiRepoExportResult result) {
         String timestamp = FILE_NAME_FORMATTER.format(result.getGeneratedAt());
         return "scan-report-multi-" + timestamp + "." + format;
+    }
+
+    // ========== 异步导出相关API ==========
+
+    /**
+     * 创建异步导出任务
+     */
+    @PostMapping("/export/async/create")
+    public ApiResponse<?> createAsyncExportTask(@Valid @RequestBody MultiRepoExportRequestDTO requestDTO) {
+        log.info("收到异步导出任务创建请求: repos={}, format={}", 
+            requestDTO.getRepos().size(), requestDTO.getFormat());
+        
+        try {
+            String taskId = asyncExportTaskService.createExportTask(requestDTO);
+            Map<String, Object> result = new java.util.HashMap<>();
+            result.put("taskId", taskId);
+            result.put("status", "PENDING");
+            result.put("message", "任务已提交，正在处理中...");
+            return ApiResponse.success("异步导出任务已创建", result);
+        } catch (IllegalStateException e) {
+            log.warn("异步导出任务创建失败: {}", e.getMessage());
+            return ApiResponse.<Object>error(e.getMessage());
+        } catch (Exception e) {
+            log.error("异步导出任务创建失败", e);
+            return ApiResponse.<Object>error("创建异步导出任务失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 查询异步导出任务状态
+     */
+    @GetMapping("/export/async/status/{taskId}")
+    public ApiResponse<?> getAsyncExportTaskStatus(@PathVariable String taskId) {
+        try {
+            ExportTask task = asyncExportTaskService.getTaskStatus(taskId);
+            
+            Map<String, Object> result = new java.util.HashMap<>();
+            result.put("taskId", task.getTaskId());
+            result.put("status", task.getStatus().name());
+            result.put("progressPercentage", task.getProgressPercentage());
+            result.put("currentStage", task.getCurrentStage());
+            result.put("progressMessage", task.getProgressMessage());
+            result.put("createdAt", task.getCreatedAt());
+            result.put("startedAt", task.getStartedAt());
+            result.put("completedAt", task.getCompletedAt());
+            result.put("isProcessing", task.isProcessing());
+            result.put("isFinished", task.isFinished());
+            result.put("isDownloadable", task.isDownloadable());
+            result.put("fileName", task.getFileName());
+            result.put("fileSize", task.getFileSize());
+            
+            if (task.getErrorMessage() != null) {
+                result = new java.util.HashMap<>(result);
+                result.put("errorMessage", task.getErrorMessage());
+            }
+            
+            return ApiResponse.success(result);
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.<Object>error(e.getMessage());
+        } catch (Exception e) {
+            log.error("查询异步导出任务状态失败: {}", taskId, e);
+            return ApiResponse.<Object>error("查询任务状态失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 下载异步导出任务生成的文件
+     */
+    @GetMapping("/export/async/download/{taskId}")
+    public ResponseEntity<ByteArrayResource> downloadAsyncExportFile(@PathVariable String taskId) {
+        try {
+            ExportTask task = asyncExportTaskService.getTaskStatus(taskId);
+            
+            if (!task.isDownloadable()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, 
+                    "任务未完成或文件不可下载，当前状态: " + task.getStatus());
+            }
+            
+            java.nio.file.Path filePath = asyncExportTaskService.getTaskFile(taskId);
+            byte[] fileData = java.nio.file.Files.readAllBytes(filePath);
+            
+            ByteArrayResource resource = new ByteArrayResource(fileData);
+            MediaType mediaType = task.getFileName().endsWith(".xlsx") ? 
+                MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") :
+                MediaType.parseMediaType("text/csv");
+            
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, 
+                        "attachment; filename=\"" + task.getFileName() + "\"")
+                    .contentLength(fileData.length)
+                    .contentType(mediaType)
+                    .body(resource);
+                    
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage());
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("下载异步导出文件失败: {}", taskId, e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, 
+                "下载文件失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 取消异步导出任务
+     */
+    @DeleteMapping("/export/async/cancel/{taskId}")
+    public ApiResponse<?> cancelAsyncExportTask(@PathVariable String taskId) {
+        try {
+            boolean cancelled = asyncExportTaskService.cancelTask(taskId);
+            if (cancelled) {
+                Map<String, Object> cancelResult = new java.util.HashMap<>();
+                cancelResult.put("taskId", taskId);
+                return ApiResponse.success("任务已取消", cancelResult);
+            } else {
+                return ApiResponse.<Object>error("任务无法取消，可能已完成或不存在");
+            }
+        } catch (Exception e) {
+            log.error("取消异步导出任务失败: {}", taskId, e);
+            return ApiResponse.<Object>error("取消任务失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 获取所有异步导出任务列表
+     */
+    @GetMapping("/export/async/tasks")
+    public ApiResponse<?> getAllAsyncExportTasks() {
+        try {
+            List<ExportTask> tasks = asyncExportTaskService.getAllTasks();
+            
+            java.util.List<Map<String, Object>> taskList = tasks.stream()
+                .map(task -> {
+                    Map<String, Object> taskInfo = new java.util.HashMap<>();
+                    taskInfo.put("taskId", task.getTaskId());
+                    taskInfo.put("status", task.getStatus().name());
+                    taskInfo.put("progressPercentage", task.getProgressPercentage());
+                    taskInfo.put("currentStage", task.getCurrentStage());
+                    taskInfo.put("progressMessage", task.getProgressMessage());
+                    taskInfo.put("createdAt", task.getCreatedAt());
+                    taskInfo.put("startedAt", task.getStartedAt());
+                    taskInfo.put("completedAt", task.getCompletedAt());
+                    taskInfo.put("isProcessing", task.isProcessing());
+                    taskInfo.put("isFinished", task.isFinished());
+                    taskInfo.put("isDownloadable", task.isDownloadable());
+                    taskInfo.put("fileName", task.getFileName());
+                    taskInfo.put("fileSize", task.getFileSize());
+                    
+                    if (task.getErrorMessage() != null) {
+                        taskInfo.put("errorMessage", task.getErrorMessage());
+                    }
+                    
+                    return taskInfo;
+                })
+                .collect(Collectors.toList());
+            
+            Map<String, Object> resultList = new java.util.HashMap<>();
+            resultList.put("tasks", taskList);
+            resultList.put("total", taskList.size());
+            resultList.put("currentProcessing", asyncExportTaskService.getCurrentProcessingTasks());
+            resultList.put("maxConcurrent", asyncExportTaskService.getMaxConcurrentTasks());
+            return ApiResponse.success(resultList);
+        } catch (Exception e) {
+            log.error("获取异步导出任务列表失败", e);
+            return ApiResponse.<Object>error("获取任务列表失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 清理过期的异步导出任务
+     */
+    @DeleteMapping("/export/async/cleanup")
+    public ApiResponse<?> cleanupExpiredAsyncExportTasks() {
+        try {
+            asyncExportTaskService.cleanupExpiredTasks();
+            return ApiResponse.success("过期任务清理完成", null);
+        } catch (Exception e) {
+            log.error("清理过期异步导出任务失败", e);
+            return ApiResponse.<Object>error("清理任务失败: " + e.getMessage());
+        }
     }
 }

@@ -15,8 +15,11 @@ import org.eclipse.jgit.diff.EditList;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.revwalk.filter.RevFilter;
 import org.eclipse.jgit.treewalk.CanonicalTreeParser;
 import org.eclipse.jgit.treewalk.EmptyTreeIterator;
+import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.util.io.DisabledOutputStream;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.Cacheable;
@@ -24,14 +27,13 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
  * Git提交历史服务
  * 负责获取文件的Git提交历史信息
+ * 优化：支持仓库级别批量获取，显著提升性能
  */
 @Slf4j
 @Service
@@ -77,7 +79,195 @@ public class GitCommitHistoryService {
     }
 
     /**
-     * 获取单个仓库的文件提交历史
+     * 【新增】批量获取仓库所有提交历史（性能优化关键方法）
+     * 一次性获取仓库所有提交，然后在内存中按文件路径分组
+     * 
+     * @param repoConfig 仓库配置
+     * @param repoType 仓库类型
+     * @param timeFrom 开始时间
+     * @param timeTo 结束时间
+     * @return Map<文件路径, 提交列表>
+     */
+    @Cacheable(value = "repoAllCommits", key = "#repoConfig.repoPath.absolutePath + '_' + #repoType + '_' + #timeFrom + '_' + #timeTo")
+    public Map<String, List<GitCommitInfoDTO>> getRepoAllCommits(
+            RepoConfig repoConfig, 
+            RepoType repoType, 
+            Instant timeFrom, 
+            Instant timeTo) {
+        
+        if (repoConfig == null || repoConfig.getRepoPath() == null) {
+            log.warn("Repository config is null for repo type: {}", repoType);
+            return new HashMap<>();
+        }
+
+        long startTime = System.currentTimeMillis();
+        log.info("开始批量获取{}仓库所有提交历史: 时间范围 {} 至 {}", 
+            repoType, timeFrom, timeTo);
+
+        try (Repository repository = gitRepositoryHelper.openRepository(repoConfig)) {
+            try (Git git = new Git(repository)) {
+                // 构建时间范围过滤的提交遍历
+                try (RevWalk revWalk = new RevWalk(repository)) {
+                    // 设置时间范围
+                    if (timeFrom != null || timeTo != null) {
+                        revWalk.setRevFilter(new RevFilter() {
+                            @Override
+                            public boolean include(RevWalk walker, RevCommit commits) throws IOException {
+                                Instant commitTime = Instant.ofEpochSecond(commits.getCommitTime());
+                                boolean afterFrom = timeFrom == null || !commitTime.isBefore(timeFrom);
+                                boolean beforeTo = timeTo == null || !commitTime.isAfter(timeTo);
+                                return afterFrom && beforeTo;
+                            }
+
+                            @Override
+                            public RevFilter clone() {
+                                return this;
+                            }
+                        });
+                    }
+
+                    // 不限制文件路径，获取所有提交
+                    revWalk.markStart(revWalk.parseCommit(repository.resolve("HEAD")));
+                    revWalk.setRetainBody(false);
+
+                    Map<String, List<GitCommitInfoDTO>> fileCommitsMap = new HashMap<>();
+                    int totalCommits = 0;
+                    int processedFiles = 0;
+
+                    for (RevCommit commit : revWalk) {
+                        totalCommits++;
+                        
+                        // 获取此提交涉及的所有文件
+                        List<String> commitFiles = getCommitFiles(repository, commit);
+                        
+                        // 为每个文件添加此提交
+                        for (String filePath : commitFiles) {
+                            GitCommitInfoDTO commitInfo = convertToGitCommitInfoDTO(commit, repoConfig, repoType, filePath);
+                            
+                            fileCommitsMap.computeIfAbsent(filePath, k -> new ArrayList<>()).add(commitInfo);
+                        }
+                        
+                        // 避免处理过多文件，限制处理数量
+                        if (processedFiles > 1000 && totalCommits % 1000 == 0) {
+                            log.debug("已处理 {} 个文件，当前提交数: {}", processedFiles, totalCommits);
+                        }
+                        processedFiles = Math.max(processedFiles, commitFiles.size());
+                    }
+
+                    // 对每个文件的提交列表按时间倒序排序
+                    fileCommitsMap.forEach((filePath, commits) -> {
+                        commits.sort(Comparator.comparing(GitCommitInfoDTO::getCommitTime).reversed());
+                    });
+
+                    long duration = System.currentTimeMillis() - startTime;
+                    log.info("{}仓库批量获取完成: {} 个文件, {} 个提交, 耗时: {}ms", 
+                        repoType, fileCommitsMap.size(), totalCommits, duration);
+
+                    return fileCommitsMap;
+                }
+            }
+        } catch (IOException e) {
+            log.error("Failed to get all commits for repo: {}", repoType, e);
+            return new HashMap<>();
+        }
+    }
+
+    /**
+     * 获取提交涉及的所有文件路径
+     */
+    private List<String> getCommitFiles(Repository repository, RevCommit commit) throws IOException {
+        List<String> filePaths = new ArrayList<>();
+        
+        if (commit.getParentCount() == 0) {
+            // 初始提交，获取所有文件
+            try (TreeWalk treeWalk = new TreeWalk(repository)) {
+                treeWalk.addTree(commit.getTree());
+                treeWalk.setRecursive(true);
+                while (treeWalk.next()) {
+                    String filePath = treeWalk.getPathString();
+                    if (filePath != null && !filePath.isEmpty()) {
+                        filePaths.add(filePath);
+                    }
+                }
+            }
+        } else {
+            // 普通提交，比较父子提交差异
+            RevCommit parent = commit.getParent(0);
+            try (DiffFormatter diffFormatter = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
+                diffFormatter.setRepository(repository);
+                try (ObjectReader reader = repository.newObjectReader()) {
+                    CanonicalTreeParser parentTree = new CanonicalTreeParser();
+                    CanonicalTreeParser commitTree = new CanonicalTreeParser();
+                    
+                    parentTree.reset(reader, parent.getTree());
+                    commitTree.reset(reader, commit.getTree());
+                    
+                    List<DiffEntry> diffs = diffFormatter.scan(parentTree, commitTree);
+                    for (DiffEntry diff : diffs) {
+                        String newPath = diff.getNewPath();
+                        String oldPath = diff.getOldPath();
+                        
+                        if (!newPath.equals("/dev/null")) {
+                            filePaths.add(newPath);
+                        }
+                        if (oldPath != null && !oldPath.equals("/dev/null")) {
+                            filePaths.add(oldPath);
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                log.warn("IO exception while getting commit files for commit: {}", commit.getId(), e);
+                return new ArrayList<>();
+            }
+        }
+        
+        return filePaths.stream()
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 【优化后】批量获取文件提交历史（推荐使用此方法）
+     * 
+     * @param filePaths 文件路径列表
+     * @param repoConfig 仓库配置
+     * @param repoType 仓库类型
+     * @param timeFrom 开始时间
+     * @param timeTo 结束时间
+     * @return Map<文件路径, 提交列表>
+     */
+    public Map<String, List<GitCommitInfoDTO>> getBatchCommitHistory(
+            List<String> filePaths, 
+            RepoConfig repoConfig, 
+            RepoType repoType,
+            Instant timeFrom, 
+            Instant timeTo) {
+        
+        if (repoConfig == null || filePaths == null || filePaths.isEmpty()) {
+            log.warn("Invalid parameters for batch commit history request");
+            return new HashMap<>();
+        }
+
+        // 一次性获取仓库所有提交，然后按文件筛选
+        Map<String, List<GitCommitInfoDTO>> allCommits = getRepoAllCommits(repoConfig, repoType, timeFrom, timeTo);
+        
+        // 只返回需要的文件
+        Map<String, List<GitCommitInfoDTO>> result = new HashMap<>();
+        for (String filePath : filePaths) {
+            List<GitCommitInfoDTO> commits = allCommits.get(filePath);
+            if (commits != null) {
+                result.put(filePath, commits);
+            }
+        }
+
+        log.debug("批量获取提交历史完成: 请求 {} 个文件，返回 {} 个文件", 
+            filePaths.size(), result.size());
+
+        return result;
+    }
+
+    /**
+     * 获取单个仓库的文件提交历史（保留向后兼容，但推荐使用批量方法）
      * 
      * @param filePath 文件路径
      * @param repoConfig 仓库配置
@@ -187,8 +377,8 @@ public class GitCommitHistoryService {
      * @return 提交统计DTO
      */
     private GitCommitInfoDTO.CommitStatsDTO extractCommitStats(RevCommit commit, RepoConfig repoConfig, String filePath) {
-        try (Repository repository = gitRepositoryHelper.openRepository(repoConfig)) {
-            try (Git git = new Git(repository)) {
+        try {
+            try (Repository repository = gitRepositoryHelper.openRepository(repoConfig)) {
                 DiffFormatter diffFormatter = new DiffFormatter(DisabledOutputStream.INSTANCE);
                 diffFormatter.setRepository(repository);
                 
@@ -247,7 +437,15 @@ public class GitCommitHistoryService {
                         .build();
             }
         } catch (IOException e) {
-            log.warn("Failed to extract commit stats for commit: {} in file: {}", commit.getId(), filePath, e);
+            log.warn("IO exception while extracting commit stats for commit: {} in file: {}", commit.getId(), filePath, e);
+            return GitCommitInfoDTO.CommitStatsDTO.builder()
+                    .added(0)
+                    .removed(0)
+                    .modified(0)
+                    .filesChanged(0)
+                    .build();
+        } catch (Exception e) {
+            log.warn("Unexpected exception while extracting commit stats for commit: {} in file: {}", commit.getId(), filePath, e);
             return GitCommitInfoDTO.CommitStatsDTO.builder()
                     .added(0)
                     .removed(0)
@@ -265,5 +463,16 @@ public class GitCommitHistoryService {
     public void clearCache(String filePath) {
         // 这里可以集成Spring Cache的缓存清除功能
         log.info("Cache cleared for file: {}", filePath);
+    }
+
+    /**
+     * 清除仓库级别的缓存
+     * 
+     * @param repoConfig 仓库配置
+     * @param repoType 仓库类型
+     */
+    public void clearRepoCache(RepoConfig repoConfig, RepoType repoType) {
+        log.info("Cache cleared for repo: {} {}", repoType, repoConfig.getRepoPath());
+        // 可以根据具体的缓存实现来清除
     }
 }

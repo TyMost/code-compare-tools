@@ -3,7 +3,7 @@
     v-model="visible"
     placement="bottom-end"
     trigger="click"
-    width="360"
+    width="400"
   >
     <div class="diff-matrix-filters__section">
       <div class="diff-matrix-filters__label">状态</div>
@@ -66,6 +66,13 @@
       </div>
       <el-checkbox v-model="localFilters.includeEmptyCoverage">
         包含覆盖率为空的文件
+      </el-checkbox>
+    </div>
+
+    <div class="diff-matrix-filters__section">
+      <div class="diff-matrix-filters__label">提交信息</div>
+      <el-checkbox v-model="localFilters.includeCommitInfo">
+        包含提交信息
       </el-checkbox>
     </div>
 
@@ -157,6 +164,10 @@ export default {
       type: Array,
       default: () => [],
     },
+    availableAuthors: {
+      type: Array,
+      default: () => [],
+    },
   },
   data() {
     return {
@@ -185,7 +196,8 @@ export default {
         includeEmpty === false ||
         fileExtensions.length > 0 ||
         excludePatterns.length > 0 ||
-        incoming.excludeTestFiles === true
+        incoming.excludeTestFiles === true ||
+        incoming.includeCommitInfo === true
       );
     },
     showExcludePatterns() {
@@ -224,6 +236,8 @@ export default {
       const fileExtensions = Array.isArray(source.fileExtensions) ? [...source.fileExtensions] : [];
       const excludePatterns = Array.isArray(source.excludePatterns) ? [...source.excludePatterns] : [];
       const excludeTestFiles = source.excludeTestFiles === undefined ? false : !!source.excludeTestFiles;
+      const includeCommitInfo = source.includeCommitInfo === undefined ? false : !!source.includeCommitInfo;
+      
       return {
         statuses,
         coverageRange,
@@ -231,6 +245,7 @@ export default {
         fileExtensions,
         excludePatterns,
         excludeTestFiles,
+        includeCommitInfo,
       };
     },
     applyFilters() {
@@ -242,6 +257,7 @@ export default {
             return Number((clamped / 100).toFixed(4));
           })
         : [0, 1];
+      
       this.$emit('change', {
         statuses: Array.isArray(this.localFilters.statuses)
           ? [...this.localFilters.statuses]
@@ -255,6 +271,7 @@ export default {
           ? [...this.localFilters.excludePatterns].filter(pattern => pattern.trim() !== '')
           : [],
         excludeTestFiles: this.localFilters.excludeTestFiles || false,
+        includeCommitInfo: this.localFilters.includeCommitInfo || false,
       });
       this.visible = false;
     },

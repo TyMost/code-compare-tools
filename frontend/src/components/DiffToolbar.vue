@@ -32,6 +32,14 @@
       >
         折叠未变更
       </el-checkbox>
+      <el-button
+        size="small"
+        :type="showBlockMapping ? 'primary' : 'default'"
+        :icon="showBlockMapping ? 'el-icon-connection' : 'el-icon-connection'"
+        @click="$emit('toggle-block-mapping')"
+      >
+        块级映射
+      </el-button>
     </div>
     <div class="diff-toolbar__actions">
       <el-button
@@ -86,6 +94,10 @@ export default {
       default: false,
     },
     disableRevert: {
+      type: Boolean,
+      default: false,
+    },
+    showBlockMapping: {
       type: Boolean,
       default: false,
     },

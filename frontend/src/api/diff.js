@@ -31,12 +31,20 @@ export async function scanFull(payload) {
 }
 
 export async function fetchDetail({ taskId, filePath }) {
-  const { data, message } = await request('POST', '/api/scan/detail', { taskId, filePath });
-  return {
-    ...data,
-    coverage: toNumber(data?.coverage),
-    message,
-  };
+  console.log('API 调用 fetchDetail:', { taskId, filePath });
+  
+  try {
+    const { data, message } = await request('POST', '/api/scan/detail', { taskId, filePath });
+    console.log('API 响应 fetchDetail 成功:', { data, message });
+    return {
+      ...data,
+      coverage: toNumber(data?.coverage),
+      message,
+    };
+  } catch (error) {
+    console.error('API 响应 fetchDetail 失败:', error);
+    throw error;
+  }
 }
 
 export function fetchPresets() {

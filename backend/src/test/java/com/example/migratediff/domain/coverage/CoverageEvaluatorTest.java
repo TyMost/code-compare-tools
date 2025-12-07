@@ -18,8 +18,10 @@ class CoverageEvaluatorTest {
     void evaluateFile_shouldReturnFullCoverageWhenBlocksMatch() {
         DiffBlock oracleBlock = DiffBlock.builder()
                 .contentFrom("int value = 1;")
+                .contentTo("int value = 1;")
                 .build();
         DiffBlock gaussBlock = DiffBlock.builder()
+                .contentFrom("int value = 1;")
                 .contentTo("int value = 1;")
                 .build();
         DiffFile oracleFile = DiffFile.builder()
@@ -37,14 +39,17 @@ class CoverageEvaluatorTest {
         assertEquals(1.0D, detail.getMatchedLines(), 1e-6, "加权匹配行数等于总行数");
         assertEquals(1, detail.getTotalLines(), "单行代码的总行数应为 1");
         assertTrue(detail.getMatchedBlocks().contains(oracleBlock), "匹配块列表应包含原始块");
+        assertTrue(detail.getUnmatchedBlocks().isEmpty(), "无阈值算法下，unmatchedBlocks应为空");
     }
 
     @Test
     void evaluateFile_shouldReturnWeightedCoverageWithoutThreshold() {
         DiffBlock oracleBlock = DiffBlock.builder()
                 .contentFrom("alpha beta")
+                .contentTo("alpha beta")
                 .build();
         DiffBlock gaussBlock = DiffBlock.builder()
+                .contentFrom("alpha")
                 .contentTo("alpha")
                 .build();
         DiffFile oracleFile = DiffFile.builder()
@@ -62,15 +67,18 @@ class CoverageEvaluatorTest {
         assertEquals(expectedSimilarity, detail.getCoverage(), 1e-6, "覆盖率应等于相似度加权结果");
         assertEquals(expectedSimilarity, detail.getMatchedLines(), 1e-6, "加权匹配行数应等于相似度 × 行数");
         assertEquals(1, detail.getTotalLines(), "单行文本的总行数应为 1");
-        assertTrue(detail.getUnmatchedBlocks().contains(oracleBlock), "未达展示阈值的块应记录在 unmatched 列表中");
+        assertTrue(detail.getMatchedBlocks().contains(oracleBlock), "无阈值算法下，所有块都在matchedBlocks中");
+        assertTrue(detail.getUnmatchedBlocks().isEmpty(), "无阈值算法下，unmatchedBlocks为空");
     }
 
     @Test
     void evaluateFile_shouldTreatTargetSupersetAsFullCoverage() {
         DiffBlock oracleBlock = DiffBlock.builder()
                 .contentFrom("alpha beta")
+                .contentTo("alpha beta")
                 .build();
         DiffBlock gaussBlock = DiffBlock.builder()
+                .contentFrom("prefix alpha beta suffix")
                 .contentTo("prefix alpha beta suffix")
                 .build();
         DiffFile oracleFile = DiffFile.builder()
@@ -86,20 +94,56 @@ class CoverageEvaluatorTest {
 
         assertEquals(1.0D, detail.getCoverage(), 1e-6, "ΔO 被 ΔG 完整包含时覆盖率应为 100%");
         assertEquals(1.0D, detail.getMatchedLines(), 1e-6, "加权匹配行数应等于总行数");
+        assertTrue(detail.getMatchedBlocks().contains(oracleBlock), "无阈值算法下，所有块都在matchedBlocks中");
+        assertTrue(detail.getUnmatchedBlocks().isEmpty(), "无阈值算法下，unmatchedBlocks为空");
+    }
+
+    @Test
+    void evaluateFile_withThreshold_shouldSeparateByDisplayThreshold() {
+        DiffBlock oracleBlock = DiffBlock.builder()
+                .contentFrom("alpha beta")
+                .contentTo("alpha beta")
+                .build();
+        DiffBlock gaussBlock = DiffBlock.builder()
+                .contentFrom("alpha")
+                .contentTo("alpha")
+                .build();
+        DiffFile oracleFile = DiffFile.builder()
+                .relativePath("demo/Partial.java")
+                .blocks(Collections.singletonList(oracleBlock))
+                .build();
+        DiffFile gaussFile = DiffFile.builder()
+                .relativePath("demo/Partial.java")
+                .blocks(Collections.singletonList(gaussBlock))
+                .build();
+
+        // 使用带阈值的方法，阈值用于展示层
+        CoverageDetail detail = evaluator.evaluateFile(oracleFile, gaussFile, 0.85);
+
+        double expectedSimilarity = 0.5D; // 相似度仍为0.5
+        assertEquals(expectedSimilarity, detail.getCoverage(), 1e-6, "覆盖率计算不应受阈值影响");
+        assertEquals(expectedSimilarity, detail.getMatchedLines(), 1e-6, "加权匹配行数应等于相似度 × 行数");
+        assertEquals(1, detail.getTotalLines(), "单行文本的总行数应为 1");
+        assertTrue(detail.getMatchedBlocks().isEmpty(), "低于阈值应放入unmatchedBlocks");
+        assertTrue(detail.getUnmatchedBlocks().contains(oracleBlock), "低于阈值应放入unmatchedBlocks");
     }
 
     @Test
     void evaluateFiles_shouldAggregateWeightedCoverage() {
         DiffBlock oracleExact = DiffBlock.builder()
                 .contentFrom("lineA")
+                .contentTo("lineA")
                 .build();
         DiffBlock gaussExact = DiffBlock.builder()
+                .contentFrom("lineA")
                 .contentTo("lineA")
                 .build();
         DiffBlock oraclePartial = DiffBlock.builder()
                 .contentFrom("one two")
+                .contentTo("one two")
                 .build();
         DiffBlock gaussPartial = DiffBlock.builder()
+                .contentFrom("one")
                 .contentTo("one")
                 .build();
 

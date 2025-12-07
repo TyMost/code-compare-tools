@@ -1,6 +1,29 @@
 <template>
   <div class="file-diff-page">
-    <el-row :gutter="16">
+    <!-- 初始加载状态 -->
+    <div v-if="!initialized && (loadingDetail || loadingMatrix)" class="initial-loading">
+      <el-card>
+        <div class="loading-content">
+          <i class="el-icon-loading loading-icon"></i>
+          <div class="loading-text">正在加载数据，请稍候...</div>
+          <div class="loading-tips">如果长时间无响应，请检查网络连接或刷新页面</div>
+        </div>
+      </el-card>
+    </div>
+
+    <!-- 错误状态 -->
+    <div v-else-if="loadError" class="error-state">
+      <el-card>
+        <div class="error-content">
+          <i class="el-icon-warning-outline error-icon"></i>
+          <div class="error-message">{{ loadError }}</div>
+          <el-button type="primary" @click="retryLoad">重试</el-button>
+        </div>
+      </el-card>
+    </div>
+
+    <!-- 主要内容 -->
+    <el-row v-else :gutter="16">
       <el-col :span="24">
         <el-card>
           <div class="file-diff-page__info">
@@ -13,15 +36,76 @@
                 <span>ΔG：+{{ currentFile.stats.gaussAdded }}/-{{ currentFile.stats.gaussRemoved }}</span>
               </div>
             </div>
-            <el-button-group>
-              <el-button size="mini" @click="navigatePrev" :disabled="!hasPrev">
-                上一文件
-              </el-button>
-              <el-button size="mini" @click="navigateNext" :disabled="!hasNext">
-                下一文件
-              </el-button>
-            </el-button-group>
+            <div class="file-diff-page__actions">
+              <el-button-group>
+                <el-button size="mini" @click="navigatePrev" :disabled="!hasPrev">
+                  上一文件
+                </el-button>
+                <el-button size="mini" @click="navigateNext" :disabled="!hasNext">
+                  下一文件
+                </el-button>
+              </el-button-group>
+              
+              <!-- 下拉菜单式刷新按钮 -->
+              <el-dropdown @command="handleRefreshCommand" :disabled="!storeTaskId">
+                <el-button 
+                  size="mini" 
+                  type="primary" 
+                  icon="el-icon-refresh" 
+                  @click="handleRefreshCommand('current')"
+                  :loading="refreshing"
+                  title="刷新当前仓库"
+                >
+                  🔄 {{ refreshing ? '刷新中...' : '刷新' }}
+                  <i class="el-icon-arrow-down el-icon--right"></i>
+                </el-button>
+                <el-dropdown-menu slot="dropdown">
+                  <el-dropdown-item command="current" :disabled="!storeTaskId">
+                    <i class="el-icon-refresh"></i>
+                    刷新当前仓库
+                  </el-dropdown-item>
+                  <el-dropdown-item command="all" divided>
+                    <i class="el-icon-refresh"></i>
+                    刷新所有仓库
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </el-dropdown>
+            </div>
           </div>
+          
+          <!-- 批量刷新进度 -->
+          <el-alert
+            v-if="batchRefreshing"
+            title="正在批量刷新仓库..."
+            type="info"
+            :closable="false"
+            class="file-diff-page__batch-progress"
+          >
+            <div class="batch-progress-content">
+              <div class="batch-progress-bar">
+                <el-progress 
+                  :percentage="batchProgressPercentage" 
+                />
+              </div>
+              <div class="batch-progress-text">
+                {{ batchRefreshProgress.currentRepo }} ({{ batchRefreshProgress.current }}/{{ batchRefreshProgress.total }})
+              </div>
+            </div>
+            
+            <!-- 错误信息 -->
+            <div v-if="batchRefreshProgress.errors.length > 0" class="batch-errors">
+              <div class="error-title">刷新失败：</div>
+              <div class="error-list">
+                <div 
+                  v-for="error in batchRefreshProgress.errors" 
+                  :key="error.repoId"
+                  class="error-item"
+                >
+                  <strong>{{ error.repo }}:</strong> {{ error.error }}
+                </div>
+              </div>
+            </div>
+          </el-alert>
           
           <!-- 提交历史组件 -->
           <div 
@@ -77,7 +161,7 @@
                       </div>
                     </div>
                   </div>
-                  
+                   
                   <!-- 空状态 -->
                   <div v-if="mergedCommitHistory.length === 0 && !loadingCommitHistory" class="empty-state">
                     <i class="el-icon-document-remove"></i>
@@ -100,7 +184,23 @@
             @generate="handleGenerate"
             @apply="handleApply"
             @revert="handleRevert"
+            @toggle-block-mapping="toggleBlockMapping"
+            :show-block-mapping="showBlockMapping"
           />
+          <!-- 块级映射视图 -->
+          <div v-if="showBlockMapping" class="block-mapping-section">
+            <el-divider content-position="left">
+              <span class="section-title">
+                <i class="el-icon-connection"></i>
+                块级映射关系
+              </span>
+            </el-divider>
+            <block-mapping-viewer
+              :block-mapping="blockMappingData"
+              :loading="loadingBlockMapping"
+            />
+          </div>
+
           <file-diff-viewer
             :file-path="currentFile.filePath"
             :mode="diffMode"
@@ -112,7 +212,6 @@
         </el-card>
       </el-col>
     </el-row>
-    <el-skeleton v-if="loadingDetail && !currentFile.filePath" :rows="6" animated />
   </div>
 </template>
 
@@ -120,6 +219,7 @@
 import { mapState, mapActions, mapMutations, mapGetters } from 'vuex';
 import DiffToolbar from '../components/DiffToolbar.vue';
 import FileDiffViewer from '../components/FileDiffViewer.vue';
+import BlockMappingViewer from '../components/BlockMappingViewer.vue';
 import commitApi from '../api/commit';
 
 export default {
@@ -127,6 +227,7 @@ export default {
   components: {
     DiffToolbar,
     FileDiffViewer,
+    BlockMappingViewer,
   },
   props: {
     taskId: {
@@ -149,6 +250,9 @@ export default {
   data() {
     return {
       initialized: false,
+      loadError: null,
+      retryCount: 0,
+      refreshing: false,
       viewerOptions: {
         inlineView: false,
         ignoreWhitespace: false,
@@ -160,21 +264,40 @@ export default {
       commitHistoryCache: new Map(), // 性能优化：缓存提交历史
       oracleCommits: [],
       gaussCommits: [],
+      // 块映射相关状态
+      showBlockMapping: false,
+      blockMappingCache: new Map(), // 性能优化：缓存块映射数据
+      blockMappingData: {
+        coverage: 0,
+        matchedCount: 0,
+        totalOracleCount: 0,
+        totalGaussCount: 0,
+        matchedOracleBlocks: [],
+        matchedGaussBlocks: [],
+        unmatchedOracle: [],
+        unmatchedGauss: [],
+        matchDetails: []
+      },
+      loadingBlockMapping: false,
     };
   },
   computed: {
-    ...mapState('diff', {
-      storeTaskId: 'taskId',
-      currentFile: 'currentFile',
-      diffMatrix: 'diffMatrix',
-      loadingDetail: 'loadingDetail',
-      loadingMatrix: 'loadingMatrix',
-      diffMode: 'diffMode',
-      migrating: 'migrating',
-    }),
+    // 简化的状态映射
+    ...mapState('diff', [
+      'storeTaskId',
+      'currentFile',
+      'diffMatrix',
+      'loadingDetail',
+      'loadingMatrix',
+      'diffMode',
+      'migrating',
+      'batchRefreshing',
+      'batchRefreshProgress',
+    ]),
     ...mapGetters('diff', {
       filteredDiffMatrix: 'filteredDiffMatrix',
     }),
+    
     currentIndex() {
       return this.filteredDiffMatrix.findIndex((item) => item.filePath === this.currentFile.filePath);
     },
@@ -211,90 +334,221 @@ export default {
       
       return allCommits.sort((a, b) => new Date(b.time) - new Date(a.time));
     },
+    
+    // 批量刷新进度百分比
+    batchProgressPercentage() {
+      if (!this.batchRefreshProgress.total) return 0;
+      return Math.round((this.batchRefreshProgress.current / this.batchRefreshProgress.total) * 100);
+    },
   },
   watch: {
     taskId: {
       immediate: true,
       handler(next) {
+        console.log('[FileDiffPage] taskId watch:', { next, storeTaskId: this.storeTaskId });
         if (next && next !== this.storeTaskId) {
           this.setTaskId(next);
+          // 添加延迟检查，确保 storeTaskId 更新成功
+          this.$nextTick(() => {
+            console.log('[FileDiffPage] After setTaskId, storeTaskId:', this.storeTaskId);
+            if (!this.storeTaskId) {
+              console.error('[FileDiffPage] setTaskId failed, trying again...');
+              // 如果仍然没有设置成功，再次尝试
+              this.$nextTick(() => {
+                this.setTaskId(next);
+                console.log('[FileDiffPage] Second attempt, storeTaskId:', this.storeTaskId);
+              });
+            }
+          });
         }
       },
     },
     filePath: {
       immediate: true,
       handler() {
+        console.log('[FileDiffPage] filePath watch:', { filePath: this.filePath });
         this.ensureCurrentFile();
       },
     },
     diffMatrix(newValue, oldValue) {
+      console.log('[FileDiffPage] diffMatrix watch:', { newValue: newValue?.length, oldValue: oldValue?.length });
       if (!this.initialized && newValue !== oldValue) {
         this.ensureCurrentFile();
       }
     },
-    // 监听当前文件变化，重置提交历史状态
+    // 监听当前文件变化，重置提交历史状态和块映射状态
     'currentFile.filePath': {
       immediate: true,
       handler(newPath, oldPath) {
         if (newPath && newPath !== oldPath) {
           this.commitHistoryExpanded = false;
+          this.showBlockMapping = false;
           this.loadCommitHistory();
+          // 预加载块映射缓存
+          this.preloadBlockMappingCache();
         }
       },
     },
   },
   created() {
+    console.log('[FileDiffPage] created:', {
+      taskId: this.taskId,
+      storeTaskId: this.storeTaskId,
+      route: this.$route?.query
+    });
+    
     if (this.taskId && this.taskId !== this.storeTaskId) {
       this.setTaskId(this.taskId);
     }
-    this.ensureCurrentFile(true);
+    this.ensureCurrentFile();
   },
   methods: {
-    ...mapActions('diff', ['fetchDetail', 'generateMigration', 'applyMigration', 'revertMigration', 'fetchCommitHistory']),
+    ...mapActions('diff', ['fetchDetail', 'generateMigration', 'applyMigration', 'revertMigration', 'fetchCommitHistory', 'forceRefreshCurrentRepo', 'forceRefreshAllRepos']),
     ...mapMutations('diff', ['setDiffMode', 'setTaskId']),
-    async ensureCurrentFile(force = false) {
-      if (this.loadingMatrix && !force) {
+    
+    async handleFullRefresh() {
+      if (!this.storeTaskId) {
+        this.$message.warning('请先选择扫描任务');
         return;
       }
-      if (!this.storeTaskId || !this.diffMatrix.length) {
-        if (!this.diffMatrix.length && !force) {
-          this.$message.info('暂无缓存结果，请先在仪表盘执行全量扫描');
+      
+      this.refreshing = true;
+      try {
+        await this.forceRefreshCurrentRepo();
+        this.$message.success('全量刷新完成');
+        // 刷新后重新确保当前文件
+        await this.ensureCurrentFile(true);
+      } catch (error) {
+        console.error('全量刷新失败:', error);
+        this.$message.error(`全量刷新失败: ${error.message || error}`);
+      } finally {
+        this.refreshing = false;
+      }
+    },
+    
+    // 刷新命令处理
+    async handleRefreshCommand(command) {
+      if (command === 'current') {
+        await this.handleFullRefresh();
+      } else if (command === 'all') {
+        await this.handleBatchRefresh();
+      }
+    },
+    
+    async handleBatchRefresh() {
+      if (!this.storeTaskId) {
+        this.$message.warning('请先选择扫描任务');
+        return;
+      }
+      
+      try {
+        const result = await this.forceRefreshAllRepos();
+        
+        // 显示结果
+        const successCount = result.success.length;
+        const errorCount = result.errors.length;
+        
+        if (errorCount === 0) {
+          this.$message.success(`成功刷新 ${successCount} 个仓库`);
+        } else {
+          this.$message.warning(`刷新完成：${successCount} 个成功，${errorCount} 个失败`);
+        }
+      } catch (error) {
+        console.error('批量刷新失败:', error);
+        this.$message.error(`批量刷新失败: ${error.message}`);
+      }
+    },
+    
+    async retryLoad() {
+      this.retryCount += 1;
+      this.loadError = null;
+      await this.ensureCurrentFile(true);
+    },
+    
+    async ensureCurrentFile(force = false) {
+      console.log('[FileDiffPage] ensureCurrentFile called:', {
+        force,
+        filePath: this.filePath,
+        taskId: this.taskId,
+        storeTaskId: this.storeTaskId,
+        route: this.$route?.query,
+        currentFilePath: this.currentFile.filePath,
+        diffMatrixLength: this.diffMatrix?.length
+      });
+      
+      const routePath = this.normalizeFilePath(this.filePath || (this.$route?.query?.filePath || ''));
+      const currentPath = this.normalizeFilePath(this.currentFile.filePath);
+      const isBusy = this.loadingDetail || this.loadingMatrix;
+      if (!force && isBusy && routePath === currentPath) {
+        console.log('[FileDiffPage] Skipping ensureCurrentFile - busy and same path');
+        return;
+      }
+      
+      this.loadError = null;
+      
+      // 临时修复：如果 storeTaskId 为空，尝试使用 props 中的 taskId
+      const effectiveTaskId = this.storeTaskId || this.taskId || (this.$route?.query?.taskId || '');
+      console.log('[FileDiffPage] Using effectiveTaskId:', effectiveTaskId);
+      
+      if (!effectiveTaskId) {
+        console.warn('[FileDiffPage] No taskId available');
+        this.loadError = '缺少扫描任务，请从仪表盘重新进入';
+        this.initialized = false;
+        return;
+      }
+      
+      if (!Array.isArray(this.diffMatrix) || this.diffMatrix.length === 0) {
+        console.warn('[FileDiffPage] No diffMatrix available');
+        if (!force) {
+          this.$message.info('暂无可用的差异数据，请先在仪表盘执行扫描。');
         }
         this.initialized = false;
         return;
       }
       
-      // 优先使用过滤后的数据，如果当前文件不在过滤结果中，则使用第一个过滤结果
-      let targetPath = this.filePath || this.currentFile.filePath;
+      const firstFilteredPath = this.filteredDiffMatrix[0]?.filePath || '';
+      const firstMatrixPath = this.diffMatrix[0]?.filePath || '';
+      let targetPath = routePath || currentPath || firstFilteredPath || firstMatrixPath;
       
-      // 检查当前文件是否在筛选结果中
-      if (this.filteredDiffMatrix.length > 0) {
-        const currentInFiltered = this.filteredDiffMatrix.some(item => item.filePath === targetPath);
-        if (!currentInFiltered) {
-          // 如果当前文件不在筛选结果中，使用筛选结果的第一个文件
-          targetPath = this.filteredDiffMatrix[0].filePath;
-          this.$message.info('当前文件不在筛选结果中，已切换到筛选结果的第一个文件');
-        }
-      } else {
-        // 如果筛选结果为空，使用原始数据的第一个文件
-        const fallback = this.diffMatrix.length > 0 ? this.diffMatrix[0].filePath : '';
-        targetPath = targetPath || fallback;
-        if (this.filteredDiffMatrix.length === 0 && this.diffMatrix.length > 0) {
-          this.$message.warning('当前筛选条件下无结果，请调整筛选条件');
+      if (targetPath) {
+        const existsInMatrix = this.diffMatrix.some(item => item.filePath === targetPath);
+        if (!existsInMatrix) {
+          this.$message.warning('路由中的文件不在最新结果中，已自动切换到第一个文件。');
+          targetPath = firstFilteredPath || firstMatrixPath;
+        } else if (this.filteredDiffMatrix.length > 0) {
+          const existsInFiltered = this.filteredDiffMatrix.some(item => item.filePath === targetPath);
+          if (!existsInFiltered && firstFilteredPath) {
+            this.$message.info('当前文件不在筛选结果中，已切换到筛选列表的第一个文件。');
+            targetPath = firstFilteredPath;
+          }
         }
       }
       
       if (!targetPath) {
+        this.loadError = '无法确定要加载的文件，请返回仪表盘重新选择。';
+        this.initialized = false;
         return;
       }
       
       try {
-        await this.fetchDetail({ filePath: targetPath });
+        if (force || targetPath !== this.currentFile.filePath) {
+          console.log('[FileDiffPage] Loading file details:', { targetPath, taskId: effectiveTaskId });
+          await this.fetchDetail({ filePath: targetPath });
+        }
         this.initialized = true;
+        this.retryCount = 0;
+        this.syncRouteWithFile(targetPath);
       } catch (error) {
-        this.$message.error(error.message || '加载文件详情失败');
+        console.error('加载文件详情失败:', error);
+        this.loadError = error.message || '加载文件详情失败';
+        if (this.retryCount < 3) {
+          setTimeout(() => {
+            this.retryLoad();
+          }, 2000 * (this.retryCount + 1));
+        }
       }
     },
+    
     handleModeChange(mode) {
       this.setDiffMode(mode);
     },
@@ -368,17 +622,10 @@ export default {
       await this.fetchDetail({ filePath: next.filePath });
       this.updateRoute(next);
     },
-    updateRoute(row) {
-      this.$router.replace({
-        name: 'FileDiff',
-        query: {
-          taskId: this.storeTaskId,
-          filePath: row.filePath,
-          oracleDelta: row.oracleDelta,
-          gaussDelta: row.gaussDelta,
-        },
-      });
+    updateRoute(target) {
+      this.syncRouteWithFile(target);
     },
+    
     formatPercent(value) {
       if (value === undefined || value === null || value === '') {
         return '--';
@@ -388,6 +635,47 @@ export default {
         return '--';
       }
       return `${(numeric * 100).toFixed(1)}%`;
+    },
+    normalizeFilePath(value) {
+      return typeof value === 'string' ? value.trim() : '';
+    },
+    buildRouteQueryPayload(target) {
+      if (!target) {
+        return null;
+      }
+      const detail = typeof target === 'string'
+        ? this.diffMatrix.find(item => item.filePath === target) || { filePath: target }
+        : target;
+      if (!detail.filePath) {
+        return null;
+      }
+      const effectiveTaskId = this.storeTaskId || this.taskId || (this.$route?.query?.taskId || '');
+      const query = {
+        taskId: effectiveTaskId,
+        filePath: detail.filePath,
+        oracleDelta: detail.oracleDelta || this.oracleDelta || '',
+        gaussDelta: detail.gaussDelta || this.gaussDelta || '',
+      };
+      console.log('[FileDiffPage] Built route query payload:', query);
+      return query;
+    },
+    syncRouteWithFile(target) {
+      const query = this.buildRouteQueryPayload(target);
+      if (!query) {
+        return;
+      }
+      const currentQuery = this.$route?.query || {};
+      const keys = ['taskId', 'filePath', 'oracleDelta', 'gaussDelta'];
+      const hasDiff = keys.some(key => (currentQuery[key] || '') !== (query[key] || ''));
+      if (!hasDiff) {
+        console.log('[FileDiffPage] No route sync needed - query already matches');
+        return;
+      }
+      console.log('[FileDiffPage] Syncing route with file:', query);
+      this.$router.replace({
+        name: 'FileDiff',
+        query,
+      });
     },
     
     // 提交历史相关方法
@@ -406,7 +694,7 @@ export default {
       }
       
       // 性能优化：检查缓存
-      const cacheKey = `${this.storeTaskId}:${this.currentFile.filePath}`;
+      const cacheKey = `${this.storeTaskId || this.taskId}:${this.currentFile.filePath}`;
       if (this.commitHistoryCache.has(cacheKey)) {
         const cached = this.commitHistoryCache.get(cacheKey);
         this.oracleCommits = cached.oracle || [];
@@ -429,6 +717,9 @@ export default {
       } catch (error) {
         console.warn('加载提交历史失败:', error);
         this.$message.warning('加载提交历史失败，请稍后重试');
+        // 失败时设置空的提交历史
+        this.oracleCommits = [];
+        this.gaussCommits = [];
       } finally {
         this.loadingCommitHistory = false;
       }
@@ -437,8 +728,9 @@ export default {
     async fetchCommitHistoryFromAPI() {
       try {
         // 调用真实的API获取提交历史
+        const effectiveTaskId = this.storeTaskId || this.taskId;
         const response = await this.fetchCommitHistory({
-          taskId: this.storeTaskId,
+          taskId: effectiveTaskId,
           filePath: this.currentFile.filePath
         });
         
@@ -448,7 +740,6 @@ export default {
         
       } catch (error) {
         console.warn('获取提交历史失败:', error);
-        // 失败时设置为空数组
         this.oracleCommits = [];
         this.gaussCommits = [];
         throw error;
@@ -488,6 +779,87 @@ export default {
         return `${Math.floor(diff / year)}年前`;
       }
     },
+    
+    // 块映射相关方法
+    toggleBlockMapping() {
+      this.showBlockMapping = !this.showBlockMapping;
+      
+      // 如果展开块映射，加载数据
+      if (this.showBlockMapping) {
+        // 检查缓存
+        const cacheKey = `${this.storeTaskId || this.taskId}:${this.currentFile.filePath}`;
+        if (this.blockMappingCache.has(cacheKey)) {
+          // 使用缓存数据
+          this.blockMappingData = this.blockMappingCache.get(cacheKey);
+        } else {
+          // 没有缓存，重新加载
+          this.loadBlockMapping();
+        }
+      }
+    },
+    
+    // 预加载块映射缓存
+    preloadBlockMappingCache() {
+      const cacheKey = `${this.storeTaskId || this.taskId}:${this.currentFile.filePath}`;
+      if (this.blockMappingCache.has(cacheKey)) {
+        // 如果缓存存在，直接使用缓存数据
+        this.blockMappingData = this.blockMappingCache.get(cacheKey);
+      }
+      // 如果缓存不存在，则在用户展开时再加载
+    },
+    
+    async loadBlockMapping() {
+      if (!this.currentFile.filePath) {
+        return;
+      }
+      
+      this.loadingBlockMapping = true;
+      
+      try {
+        // 调用真实的后端API获取块映射数据
+        const effectiveTaskId = this.storeTaskId || this.taskId;
+        const response = await this.$http.post('/api/scan/block-mapping', {
+          taskId: effectiveTaskId,
+          filePath: this.currentFile.filePath
+        });
+        
+        let blockMappingData;
+        if (response && response.data) {
+          blockMappingData = response.data || this.getDefaultBlockMapping();
+        } else {
+          console.warn('块映射API返回异常:', response);
+          blockMappingData = this.getDefaultBlockMapping();
+        }
+        
+        // 更新数据
+        this.blockMappingData = blockMappingData;
+        
+        // 缓存结果
+        const cacheKey = `${this.storeTaskId || this.taskId}:${this.currentFile.filePath}`;
+        this.blockMappingCache.set(cacheKey, blockMappingData);
+        
+      } catch (error) {
+        console.warn('加载块映射失败:', error);
+        this.$message.warning('加载块映射失败，请稍后重试');
+        this.blockMappingData = this.getDefaultBlockMapping();
+      } finally {
+        this.loadingBlockMapping = false;
+      }
+    },
+    
+    getDefaultBlockMapping() {
+      return {
+        coverage: 0,
+        matchedCount: 0,
+        totalOracleCount: 0,
+        totalGaussCount: 0,
+        matchedOracleBlocks: [],
+        matchedGaussBlocks: [],
+        unmatchedOracle: [],
+        unmatchedGauss: [],
+        matchDetails: []
+      };
+    },
   },
 };
 </script>
@@ -497,6 +869,77 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* 加载状态样式 */
+.initial-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+}
+
+.loading-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+}
+
+.loading-icon {
+  font-size: 48px;
+  color: #409eff;
+  margin-bottom: 20px;
+  animation: rotating 2s linear infinite;
+}
+
+@keyframes rotating {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.loading-text {
+  font-size: 16px;
+  color: #303133;
+  margin-bottom: 8px;
+}
+
+.loading-tips {
+  font-size: 13px;
+  color: #909399;
+  line-height: 1.4;
+}
+
+/* 错误状态样式 */
+.error-state {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+}
+
+.error-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+}
+
+.error-icon {
+  font-size: 48px;
+  color: #f56c6c;
+  margin-bottom: 20px;
+}
+
+.error-message {
+  font-size: 16px;
+  color: #f56c6c;
+  margin-bottom: 20px;
+  line-height: 1.4;
 }
 
 .file-diff-page__info {
@@ -517,6 +960,61 @@ export default {
   gap: 16px;
   color: #909399;
   font-size: 13px;
+}
+
+.file-diff-page__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+/* 批量刷新进度样式 */
+.file-diff-page__batch-progress {
+  margin-bottom: 16px;
+}
+
+.batch-progress-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.batch-progress-bar {
+  margin-bottom: 8px;
+}
+
+.batch-progress-text {
+  font-size: 14px;
+  color: #606266;
+  text-align: center;
+}
+
+.batch-errors {
+  margin-top: 16px;
+  border-top: 1px solid #f56c6c;
+  padding-top: 12px;
+}
+
+.error-title {
+  font-weight: 600;
+  color: #f56c6c;
+  margin-bottom: 8px;
+}
+
+.error-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.error-item {
+  padding: 8px;
+  background: #fef0f0;
+  border: 1px solid #f56c6c;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 /* 提交历史样式 */
@@ -753,6 +1251,12 @@ export default {
 @media (max-width: 768px) {
   .file-diff-page__meta {
     flex-wrap: wrap;
+    gap: 8px;
+  }
+  
+  .file-diff-page__actions {
+    flex-direction: column;
+    align-items: flex-start;
     gap: 8px;
   }
   
