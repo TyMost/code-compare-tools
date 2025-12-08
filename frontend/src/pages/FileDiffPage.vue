@@ -46,66 +46,19 @@
                 </el-button>
               </el-button-group>
               
-              <!-- 下拉菜单式刷新按钮 -->
-              <el-dropdown @command="handleRefreshCommand" :disabled="!storeTaskId">
-                <el-button 
-                  size="mini" 
-                  type="primary" 
-                  icon="el-icon-refresh" 
-                  @click="handleRefreshCommand('current')"
-                  :loading="refreshing"
-                  title="刷新当前仓库"
-                >
-                  🔄 {{ refreshing ? '刷新中...' : '刷新' }}
-                  <i class="el-icon-arrow-down el-icon--right"></i>
-                </el-button>
-                <el-dropdown-menu slot="dropdown">
-                  <el-dropdown-item command="current" :disabled="!storeTaskId">
-                    <i class="el-icon-refresh"></i>
-                    刷新当前仓库
-                  </el-dropdown-item>
-                  <el-dropdown-item command="all" divided>
-                    <i class="el-icon-refresh"></i>
-                    刷新所有仓库
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </el-dropdown>
+              <!-- 返回总览刷新按钮 -->
+              <el-button 
+                size="mini" 
+                type="info" 
+                icon="el-icon-back"
+                @click="goToDashboard"
+                title="返回总览页面进行数据刷新"
+              >
+                🏠 返回总览
+              </el-button>
             </div>
           </div>
           
-          <!-- 批量刷新进度 -->
-          <el-alert
-            v-if="batchRefreshing"
-            title="正在批量刷新仓库..."
-            type="info"
-            :closable="false"
-            class="file-diff-page__batch-progress"
-          >
-            <div class="batch-progress-content">
-              <div class="batch-progress-bar">
-                <el-progress 
-                  :percentage="batchProgressPercentage" 
-                />
-              </div>
-              <div class="batch-progress-text">
-                {{ batchRefreshProgress.currentRepo }} ({{ batchRefreshProgress.current }}/{{ batchRefreshProgress.total }})
-              </div>
-            </div>
-            
-            <!-- 错误信息 -->
-            <div v-if="batchRefreshProgress.errors.length > 0" class="batch-errors">
-              <div class="error-title">刷新失败：</div>
-              <div class="error-list">
-                <div 
-                  v-for="error in batchRefreshProgress.errors" 
-                  :key="error.repoId"
-                  class="error-item"
-                >
-                  <strong>{{ error.repo }}:</strong> {{ error.error }}
-                </div>
-              </div>
-            </div>
-          </el-alert>
           
           <!-- 提交历史组件 -->
           <div 
@@ -252,7 +205,6 @@ export default {
       initialized: false,
       loadError: null,
       retryCount: 0,
-      refreshing: false,
       viewerOptions: {
         inlineView: false,
         ignoreWhitespace: false,
@@ -291,8 +243,6 @@ export default {
       'loadingMatrix',
       'diffMode',
       'migrating',
-      'batchRefreshing',
-      'batchRefreshProgress',
     ]),
     ...mapGetters('diff', {
       filteredDiffMatrix: 'filteredDiffMatrix',
@@ -335,11 +285,6 @@ export default {
       return allCommits.sort((a, b) => new Date(b.time) - new Date(a.time));
     },
     
-    // 批量刷新进度百分比
-    batchProgressPercentage() {
-      if (!this.batchRefreshProgress.total) return 0;
-      return Math.round((this.batchRefreshProgress.current / this.batchRefreshProgress.total) * 100);
-    },
   },
   watch: {
     taskId: {
@@ -403,59 +348,18 @@ export default {
     this.ensureCurrentFile();
   },
   methods: {
-    ...mapActions('diff', ['fetchDetail', 'generateMigration', 'applyMigration', 'revertMigration', 'fetchCommitHistory', 'forceRefreshCurrentRepo', 'forceRefreshAllRepos']),
+    ...mapActions('diff', ['fetchDetail', 'generateMigration', 'applyMigration', 'revertMigration', 'fetchCommitHistory']),
     ...mapMutations('diff', ['setDiffMode', 'setTaskId']),
     
-    async handleFullRefresh() {
-      if (!this.storeTaskId) {
-        this.$message.warning('请先选择扫描任务');
-        return;
-      }
-      
-      this.refreshing = true;
+    // 返回总览页面
+    goToDashboard() {
       try {
-        await this.forceRefreshCurrentRepo();
-        this.$message.success('全量刷新完成');
-        // 刷新后重新确保当前文件
-        await this.ensureCurrentFile(true);
+        console.log('[FileDiffPage] 返回总览页面');
+        this.$router.push({ name: 'Dashboard' });
       } catch (error) {
-        console.error('全量刷新失败:', error);
-        this.$message.error(`全量刷新失败: ${error.message || error}`);
-      } finally {
-        this.refreshing = false;
-      }
-    },
-    
-    // 刷新命令处理
-    async handleRefreshCommand(command) {
-      if (command === 'current') {
-        await this.handleFullRefresh();
-      } else if (command === 'all') {
-        await this.handleBatchRefresh();
-      }
-    },
-    
-    async handleBatchRefresh() {
-      if (!this.storeTaskId) {
-        this.$message.warning('请先选择扫描任务');
-        return;
-      }
-      
-      try {
-        const result = await this.forceRefreshAllRepos();
-        
-        // 显示结果
-        const successCount = result.success.length;
-        const errorCount = result.errors.length;
-        
-        if (errorCount === 0) {
-          this.$message.success(`成功刷新 ${successCount} 个仓库`);
-        } else {
-          this.$message.warning(`刷新完成：${successCount} 个成功，${errorCount} 个失败`);
-        }
-      } catch (error) {
-        console.error('批量刷新失败:', error);
-        this.$message.error(`批量刷新失败: ${error.message}`);
+        console.error('[FileDiffPage] 返回总览失败:', error);
+        // 备用方案：使用路径导航
+        this.$router.push('/dashboard');
       }
     },
     
@@ -969,53 +873,6 @@ export default {
   margin-bottom: 12px;
 }
 
-/* 批量刷新进度样式 */
-.file-diff-page__batch-progress {
-  margin-bottom: 16px;
-}
-
-.batch-progress-content {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.batch-progress-bar {
-  margin-bottom: 8px;
-}
-
-.batch-progress-text {
-  font-size: 14px;
-  color: #606266;
-  text-align: center;
-}
-
-.batch-errors {
-  margin-top: 16px;
-  border-top: 1px solid #f56c6c;
-  padding-top: 12px;
-}
-
-.error-title {
-  font-weight: 600;
-  color: #f56c6c;
-  margin-bottom: 8px;
-}
-
-.error-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.error-item {
-  padding: 8px;
-  background: #fef0f0;
-  border: 1px solid #f56c6c;
-  border-radius: 4px;
-  font-size: 13px;
-  line-height: 1.4;
-}
 
 /* 提交历史样式 */
 .commit-history-container {

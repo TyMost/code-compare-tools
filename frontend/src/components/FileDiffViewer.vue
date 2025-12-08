@@ -188,6 +188,10 @@ export default {
           this.buildEditorOptions()
         );
         monaco.editor.setTheme('vs');
+        
+        // 添加搜索快捷键支持
+        this.addSearchKeyBindings();
+        
         this.updateModel();
         this.scheduleLayout(true);
       });
@@ -365,6 +369,41 @@ export default {
       this.scheduleLayout(true);
       this.schedulePostResizeRefresh();
     },
+    addSearchKeyBindings() {
+      if (!this.editor) return;
+      
+      // 添加 Ctrl+F 快捷键绑定来触发搜索
+      this.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => {
+        const modifiedEditor = this.editor.getModifiedEditor();
+        if (modifiedEditor && modifiedEditor.getAction('actions.find')) {
+          modifiedEditor.getAction('actions.find').run();
+        }
+      });
+      
+      // 添加 Ctrl+H 快捷键绑定来触发替换
+      this.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyH, () => {
+        const modifiedEditor = this.editor.getModifiedEditor();
+        if (modifiedEditor && modifiedEditor.getAction('editor.action.startFindReplaceAction')) {
+          modifiedEditor.getAction('editor.action.startFindReplaceAction').run();
+        }
+      });
+      
+      // 添加 F3 快捷键绑定来查找下一个
+      this.editor.addCommand(monaco.KeyCode.F3, () => {
+        const modifiedEditor = this.editor.getModifiedEditor();
+        if (modifiedEditor && modifiedEditor.getAction('editor.action.nextMatchFindAction')) {
+          modifiedEditor.getAction('editor.action.nextMatchFindAction').run();
+        }
+      });
+      
+      // 添加 Shift+F3 快捷键绑定来查找上一个
+      this.editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F3, () => {
+        const modifiedEditor = this.editor.getModifiedEditor();
+        if (modifiedEditor && modifiedEditor.getAction('editor.action.previousMatchFindAction')) {
+          modifiedEditor.getAction('editor.action.previousMatchFindAction').run();
+        }
+      });
+    },
     buildEditorOptions() {
       return {
         automaticLayout: true,
@@ -378,6 +417,13 @@ export default {
           enabled: false,
         },
         originalEditable: false,
+        // 启用搜索功能
+        find: {
+          autoFindInSelection: 'always',
+          seedSearchStringFromSelection: 'always',
+        },
+        // 确保可以搜索
+        accessibilitySupport: 'on',
       };
     },
     resolveLanguage(path) {

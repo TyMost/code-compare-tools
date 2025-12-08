@@ -252,7 +252,7 @@ public class AsyncExportTaskService {
      */
     private String generateFileName(MultiRepoExportRequestDTO request, String format) {
         String timestamp = Instant.now().toString().replace(":", "-");
-        String extension = "excel".equalsIgnoreCase(format) ? ".xlsx" : ".csv";
+        String extension = "excel".equalsIgnoreCase(format) ? ".xls" : ".csv";
         
         if (request.getRepos() != null && request.getRepos().size() == 1) {
             // 单仓库

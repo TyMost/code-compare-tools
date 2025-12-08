@@ -31,4 +31,12 @@ public class CoverageDetail {
     /** 未达到阈值或在 ΔG 中无匹配项的 ΔO 变更块集合。 */
     @Builder.Default
     private List<DiffBlock> unmatchedBlocks = new ArrayList<>();
+    
+    // ===== Strong模式新增字段 =====
+    /** 单块得分（Strong模式使用） */
+    private double blockScore;
+    /** 是否有关键块丢失（Score < 0.3） */
+    private boolean isCriticalMiss;
+    /** 关键丢失块数量 */
+    private int criticalMissCount;
 }

@@ -15,6 +15,7 @@ const router = new VueRouter({
     },
     {
       path: '/dashboard',
+      name: 'Dashboard',
       component: DashboardPage,
       meta: {
         title: '差异概览',
@@ -37,7 +38,13 @@ const router = new VueRouter({
   ],
 });
 
+router.beforeEach((to, from, next) => {
+  console.log('[Router] 导航从', from.path, '到', to.path);
+  next();
+});
+
 router.afterEach((to) => {
+  console.log('[Router] 成功导航到', to.path);
   if (to.meta && to.meta.title) {
     document.title = `${to.meta.title} - ΔO vs ΔG 对比平台`;
   }

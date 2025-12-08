@@ -5,6 +5,8 @@ import com.example.migratediff.domain.diff.DiffSummary;
 import com.example.migratediff.domain.repo.RepoConfig;
 import com.example.migratediff.domain.repo.ScanStrategy;
 import com.example.migratediff.infrastructure.git.GitBranchFetcher.BranchPair;
+import com.example.migratediff.infrastructure.git.strategy.TimeBasedReleaseDiffStrategy;
+import com.example.migratediff.infrastructure.config.GitScanProperties;
 import com.example.migratediff.infrastructure.persistence.DiffRepository;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.diff.DiffEntry;
@@ -34,6 +36,8 @@ public class GitRepoScanner {
     private final DiffRepository diffRepository;
     private final GitRepositoryHelper repositoryHelper;
     private final IncrementalSnapshotScanner incrementalSnapshotScanner;
+    private final TimeBasedReleaseDiffStrategy timeBasedReleaseDiffStrategy;
+    private final GitScanProperties gitScanProperties;
     private final boolean exportEnabled;
 
     public GitRepoScanner(GitBranchFetcher gitBranchFetcher,
@@ -41,12 +45,16 @@ public class GitRepoScanner {
                           @Nullable DiffRepository diffRepository,
                           GitRepositoryHelper repositoryHelper,
                           IncrementalSnapshotScanner incrementalSnapshotScanner,
+                          TimeBasedReleaseDiffStrategy timeBasedReleaseDiffStrategy,
+                          GitScanProperties gitScanProperties,
                           @Value("${migratediff.export.enabled:true}") boolean exportEnabled) {
         this.gitBranchFetcher = gitBranchFetcher;
         this.gitDiffParser = gitDiffParser;
         this.diffRepository = diffRepository;
         this.repositoryHelper = repositoryHelper;
         this.incrementalSnapshotScanner = incrementalSnapshotScanner;
+        this.timeBasedReleaseDiffStrategy = timeBasedReleaseDiffStrategy;
+        this.gitScanProperties = gitScanProperties;
         this.exportEnabled = exportEnabled;
     }
 
@@ -61,6 +69,9 @@ public class GitRepoScanner {
         ScanStrategy strategy = repoConfig.getScanStrategy() != null ? repoConfig.getScanStrategy() : ScanStrategy.BRANCH;
         if (strategy == ScanStrategy.SNAPSHOT) {
             return scanSnapshot(repoConfig, emptySummary);
+        }
+        if (strategy == ScanStrategy.RELEASE_AUTO) {
+            return scanReleaseAuto(repoConfig, emptySummary);
         }
         return scanBranch(repoConfig, emptySummary);
     }
@@ -83,6 +94,21 @@ public class GitRepoScanner {
             return summary;
         } catch (RuntimeException ex) {
             LOGGER.warn("Snapshot scan failed: {}", ex.getMessage(), ex);
+            return emptySummary;
+        }
+    }
+
+    private DiffSummary scanReleaseAuto(RepoConfig repoConfig, DiffSummary emptySummary) {
+        try {
+            LOGGER.info("Starting release-auto scan for repo={}, timeFrom={}, timeTo={}",
+                    safeRepoPath(repoConfig),
+                    repoConfig != null && repoConfig.getBranchFrom() != null ? repoConfig.getBranchFrom().getTimeFrom() : null,
+                    repoConfig != null && repoConfig.getBranchTo() != null ? repoConfig.getBranchTo().getTimeTo() : null);
+            DiffSummary summary = timeBasedReleaseDiffStrategy.scan(repoConfig);
+            persistSummary(summary);
+            return summary;
+        } catch (RuntimeException ex) {
+            LOGGER.warn("Release-auto scan failed: {}", ex.getMessage(), ex);
             return emptySummary;
         }
     }

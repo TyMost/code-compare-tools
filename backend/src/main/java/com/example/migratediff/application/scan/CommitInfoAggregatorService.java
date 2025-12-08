@@ -99,7 +99,7 @@ public class CommitInfoAggregatorService {
     }
 
     /**
-     * 聚合提交者统计信息
+     * 聚合提交者统计信息 - 使用批量获取优化
      */
     public List<CommitAuthorStats> aggregateAuthorStats(List<DiffMatrixRow> rows, 
                                                      RepoConfig oracleRepo, 
@@ -110,24 +110,40 @@ public class CommitInfoAggregatorService {
         
         Map<String, CommitAuthorStats> authorStatsMap = new HashMap<>();
 
-        for (DiffMatrixRow row : rows) {
-            if (row.getFilePath() == null) continue;
-
-            try {
-                // 获取时间范围内的Oracle提交
-                List<GitCommitInfoDTO> oracleCommits = getTimeRangeCommits(row.getFilePath(), oracleRepo, timeFrom, timeTo, RepoType.ORACLE);
-                // 获取时间范围内的Gauss提交
-                List<GitCommitInfoDTO> gaussCommits = getTimeRangeCommits(row.getFilePath(), gaussRepo, timeFrom, timeTo, RepoType.GAUSS);
-
+        try {
+            // 获取所有需要处理的文件路径
+            Set<String> allFilePaths = rows.stream()
+                .map(DiffMatrixRow::getFilePath)
+                .collect(Collectors.toSet());
+            
+            // 批量获取Oracle仓库的所有提交
+            Map<String, List<GitCommitInfoDTO>> allOracleCommits = Collections.emptyMap();
+            if (oracleRepo != null) {
+                allOracleCommits = gitCommitHistoryService.getRepoAllCommits(
+                    oracleRepo, RepoType.ORACLE, timeFrom, timeTo);
+            }
+            
+            // 批量获取Gauss仓库的所有提交
+            Map<String, List<GitCommitInfoDTO>> allGaussCommits = Collections.emptyMap();
+            if (gaussRepo != null) {
+                allGaussCommits = gitCommitHistoryService.getRepoAllCommits(
+                    gaussRepo, RepoType.GAUSS, timeFrom, timeTo);
+            }
+            
+            // 处理所有文件的提交信息
+            for (String filePath : allFilePaths) {
+                List<GitCommitInfoDTO> oracleCommits = allOracleCommits.getOrDefault(filePath, Collections.emptyList());
+                List<GitCommitInfoDTO> gaussCommits = allGaussCommits.getOrDefault(filePath, Collections.emptyList());
+                
                 // 处理Oracle提交者
-                processCommits(oracleCommits, authorStatsMap, repoName, true, row.getFilePath());
+                processCommits(oracleCommits, authorStatsMap, repoName, true, filePath);
                 
                 // 处理Gauss提交者
-                processCommits(gaussCommits, authorStatsMap, repoName, false, row.getFilePath());
-
-            } catch (Exception e) {
-                log.warn("Failed to aggregate author stats for file: {}", row.getFilePath(), e);
+                processCommits(gaussCommits, authorStatsMap, repoName, false, filePath);
             }
+            
+        } catch (Exception e) {
+            log.error("批量聚合提交者统计失败: {}", e.getMessage(), e);
         }
 
         // 计算统计信息并排序
@@ -262,6 +278,51 @@ public class CommitInfoAggregatorService {
         double commitScore = Math.log1p(stats.getTotalCommitCount()) * 10;
         double fileScore = Math.log1p(stats.getAffectedFilesCount()) * 5;
         stats.setActivityScore((commitScore + fileScore) / 2);
+    }
+
+    /**
+     * 使用批量数据聚合提交者统计信息
+     */
+    public List<CommitAuthorStats> aggregateAuthorStatsWithBatchData(
+            List<DiffMatrixRow> rows,
+            Map<String, List<GitCommitInfoDTO>> oracleCommits,
+            Map<String, List<GitCommitInfoDTO>> gaussCommits,
+            String repoName) {
+        
+        Map<String, CommitAuthorStats> authorStatsMap = new HashMap<>();
+
+        try {
+            // 获取所有需要处理的文件路径
+            Set<String> allFilePaths = rows.stream()
+                .map(DiffMatrixRow::getFilePath)
+                .collect(Collectors.toSet());
+            
+            // 处理所有文件的提交信息
+            for (String filePath : allFilePaths) {
+                List<GitCommitInfoDTO> fileOracleCommits = oracleCommits != null 
+                    ? oracleCommits.getOrDefault(filePath, Collections.emptyList())
+                    : Collections.emptyList();
+                List<GitCommitInfoDTO> fileGaussCommits = gaussCommits != null
+                    ? gaussCommits.getOrDefault(filePath, Collections.emptyList())
+                    : Collections.emptyList();
+                
+                // 处理Oracle提交者
+                processCommits(fileOracleCommits, authorStatsMap, repoName, true, filePath);
+                
+                // 处理Gauss提交者
+                processCommits(fileGaussCommits, authorStatsMap, repoName, false, filePath);
+            }
+            
+        } catch (Exception e) {
+            log.error("批量聚合提交者统计失败: {}", e.getMessage(), e);
+        }
+
+        // 计算统计信息并排序
+        return authorStatsMap.values().stream()
+            .peek(this::calculateDerivedStats)
+            .sorted(Comparator.comparing(CommitAuthorStats::getTotalCommitCount).reversed()
+                .thenComparing(CommitAuthorStats::getAuthorName))
+            .collect(Collectors.toList());
     }
 
     /**

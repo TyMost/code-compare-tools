@@ -73,6 +73,7 @@ public class ScanController {
     private final ScanSnapshotService scanSnapshotService;
     private final GitCommitHistoryService gitCommitHistoryService;
     private final AsyncExportTaskService asyncExportTaskService;
+    private final com.example.migratediff.application.CoverageAppService coverageAppService;
 
     public ScanController(ScanAppService scanAppService,
                           ScanMapper scanMapper,
@@ -81,9 +82,10 @@ public class ScanController {
                            MultiRepoExportService multiRepoExportService,
                            CsvMultiRepoReportWriter csvReportWriter,
                            ExcelMultiRepoReportWriter excelReportWriter,
-                           ScanSnapshotService scanSnapshotService,
-                           GitCommitHistoryService gitCommitHistoryService,
-                           AsyncExportTaskService asyncExportTaskService) {
+                          ScanSnapshotService scanSnapshotService,
+                          GitCommitHistoryService gitCommitHistoryService,
+                          AsyncExportTaskService asyncExportTaskService,
+                          com.example.migratediff.application.CoverageAppService coverageAppService) {
         this.scanAppService = scanAppService;
         this.scanMapper = scanMapper;
         this.presetProperties = presetProperties;
@@ -94,6 +96,7 @@ public class ScanController {
         this.scanSnapshotService = scanSnapshotService;
         this.gitCommitHistoryService = gitCommitHistoryService;
         this.asyncExportTaskService = asyncExportTaskService;
+        this.coverageAppService = coverageAppService;
     }
 
     @PostMapping("/full")
@@ -445,8 +448,8 @@ public class ScanController {
             byte[] fileData = java.nio.file.Files.readAllBytes(filePath);
             
             ByteArrayResource resource = new ByteArrayResource(fileData);
-            MediaType mediaType = task.getFileName().endsWith(".xlsx") ? 
-                MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") :
+            MediaType mediaType = task.getFileName().endsWith(".xls") ?
+                MediaType.parseMediaType("application/vnd.ms-excel") :
                 MediaType.parseMediaType("text/csv");
             
             return ResponseEntity.ok()
@@ -543,6 +546,31 @@ public class ScanController {
         } catch (Exception e) {
             log.error("清理过期异步导出任务失败", e);
             return ApiResponse.<Object>error("清理任务失败: " + e.getMessage());
+        }
+    }
+
+    // ========== 覆盖率算法相关API ==========
+
+    /**
+     * 获取当前覆盖率算法信息
+     */
+    @GetMapping("/coverage/algorithm")
+    public ApiResponse<?> getCurrentAlgorithm() {
+        try {
+            Map<String, Object> result = new java.util.HashMap<>();
+            result.put("current", coverageAppService.getCurrentAlgorithm());
+            result.put("available", coverageAppService.getAvailableAlgorithms());
+            
+            // 添加算法描述
+            Map<String, String> descriptions = new java.util.HashMap<>();
+            descriptions.put("legacy", "传统算法：基于位置窗口的块匹配，使用Jaccard相似度");
+            descriptions.put("strong", "强匹配算法：基于业务特征的全局匹配，使用平均分聚合");
+            result.put("descriptions", descriptions);
+            
+            return ApiResponse.success(result);
+        } catch (Exception e) {
+            log.error("获取覆盖率算法信息失败", e);
+            return ApiResponse.<Object>error("获取算法信息失败: " + e.getMessage());
         }
     }
 }
