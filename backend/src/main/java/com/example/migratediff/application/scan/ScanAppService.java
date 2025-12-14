@@ -17,6 +17,8 @@ import com.example.migratediff.domain.migration.MigrationResult;
 import com.example.migratediff.domain.migration.MigrationSummary;
 import com.example.migratediff.domain.migration.MigrationTask;
 import com.example.migratediff.infrastructure.persistence.ScanReportRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
@@ -33,6 +35,8 @@ import java.util.function.Supplier;
 
 @Service
 public class ScanAppService {
+
+    private static final Logger log = LoggerFactory.getLogger(ScanAppService.class);
 
     private final DiffAppService diffAppService;
     private final CoverageAppService coverageAppService;
@@ -291,10 +295,24 @@ public class ScanAppService {
     }
 
     private void persistReport(ScanReport report) {
-        if (report == null || scanReportRepository == null || !report.isPersisted()) {
+        if (report == null) {
+            log.warn("扫描报告为null，跳过持久化");
             return;
         }
-        scanReportRepository.save(report);
+        if (!report.isPersisted()) {
+            log.debug("扫描报告未标记为持久化，跳过: taskId={}", report.getTaskId());
+            return;
+        }
+        if (scanReportRepository == null) {
+            log.error("ScanReportRepository不可用，跳过持久化: taskId={}", report.getTaskId());
+            return;
+        }
+        try {
+            scanReportRepository.save(report);
+            log.info("成功持久化扫描报告: taskId={}", report.getTaskId());
+        } catch (Exception e) {
+            log.error("持久化扫描报告失败: taskId={}", report.getTaskId(), e);
+        }
     }
 
     private Optional<ScanReport> resolveReport(String taskId) {

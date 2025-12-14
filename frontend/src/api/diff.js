@@ -69,3 +69,50 @@ export function exportMultiReport(payload) {
     rawResponse: true,
   });
 }
+
+// ========== 异步导出相关API ==========
+
+/**
+ * 创建异步导出任务
+ */
+export function createAsyncExportTask(payload) {
+  return request('POST', '/api/scan/export/async/create', payload);
+}
+
+/**
+ * 查询异步导出任务状态
+ */
+export function getAsyncExportTaskStatus(taskId) {
+  return request('GET', `/api/scan/export/async/status/${taskId}`);
+}
+
+/**
+ * 下载异步导出任务生成的文件
+ */
+export function downloadAsyncExportFile(taskId) {
+  return request('GET', `/api/scan/export/async/download/${taskId}`, null, {
+    responseType: 'blob',
+    rawResponse: true,
+  });
+}
+
+/**
+ * 取消异步导出任务
+ */
+export function cancelAsyncExportTask(taskId) {
+  return request('DELETE', `/api/scan/export/async/cancel/${taskId}`);
+}
+
+/**
+ * 获取所有异步导出任务列表
+ */
+export function getAllAsyncExportTasks() {
+  return request('GET', '/api/scan/export/async/tasks');
+}
+
+/**
+ * 清理过期的异步导出任务
+ */
+export function cleanupExpiredAsyncExportTasks() {
+  return request('DELETE', '/api/scan/export/async/cleanup');
+}

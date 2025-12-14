@@ -60,6 +60,7 @@ public class GitBranchFetcher {
      */
     public BranchPair resolveBranchPair(Repository repository, RepoConfig repoConfig) throws IOException, GitAPIException {
         if (repository == null || repoConfig == null) {
+            LOGGER.warn("Repository or RepoConfig is null, returning empty BranchPair");
             return BranchPair.empty();
         }
         Git git = new Git(repository);
@@ -68,6 +69,12 @@ public class GitBranchFetcher {
             ObjectId targetId = resolveCommitObjectId(git, repoConfig.getBranchTo(), repoConfig, CommitSelection.LATEST);
             populateBranchCommit(repoConfig.getBranchFrom(), baseId);
             populateBranchCommit(repoConfig.getBranchTo(), targetId);
+            
+            LOGGER.debug("Resolved BranchPair: baseId={}, targetId={}, repo={}",
+                    baseId != null ? baseId.name() : "null",
+                    targetId != null ? targetId.name() : "null",
+                    repoConfig.getRepoPath());
+            
             return new BranchPair(baseId, targetId);
         } finally {
             git.close();

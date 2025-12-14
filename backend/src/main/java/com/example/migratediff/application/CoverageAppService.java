@@ -10,6 +10,7 @@ import com.example.migratediff.domain.diff.DiffSummary;
 import com.example.migratediff.infrastructure.persistence.CoverageRepository;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
 import java.util.Collections;
@@ -22,17 +23,17 @@ public class CoverageAppService {
 
     private final Map<String, CoverageAlgorithm> algorithms;
     private final CoverageEvaluator coverageEvaluator; // 保持向后兼容
-    private final ObjectProvider<CoverageRepository> coverageRepositoryProvider;
+    private final CoverageRepository coverageRepository;
     
     @Value("${coverage.algorithm:legacy}")
     private String algorithm;
 
     public CoverageAppService(Map<String, CoverageAlgorithm> algorithms,
                               CoverageEvaluator coverageEvaluator,
-                              ObjectProvider<CoverageRepository> coverageRepositoryProvider) {
+                              @Nullable CoverageRepository coverageRepository) {
         this.algorithms = algorithms;
         this.coverageEvaluator = coverageEvaluator;
-        this.coverageRepositoryProvider = coverageRepositoryProvider;
+        this.coverageRepository = coverageRepository;
     }
 
     public CoverageSummary analyzeCoverage(String taskId, DeltaGroup deltaGroup, boolean persistResult) {
@@ -47,7 +48,7 @@ public class CoverageAppService {
     }
 
     public Optional<CoverageSummary> findByTaskId(String taskId) {
-        return Optional.ofNullable(coverageRepositoryProvider.getIfAvailable())
+        return Optional.ofNullable(coverageRepository)
                 .flatMap(repository -> repository.findByTaskId(taskId));
     }
 
@@ -81,7 +82,7 @@ public class CoverageAppService {
         );
         summary.setTaskId(taskId);
         if (persistResult) {
-            Optional.ofNullable(coverageRepositoryProvider.getIfAvailable())
+            Optional.ofNullable(coverageRepository)
                     .ifPresent(repository -> repository.save(summary));
         }
         return summary;
@@ -148,7 +149,7 @@ public class CoverageAppService {
         summary.setTaskId(taskId);
         
         if (persistResult) {
-            Optional.ofNullable(coverageRepositoryProvider.getIfAvailable())
+            Optional.ofNullable(coverageRepository)
                     .ifPresent(repository -> repository.save(summary));
         }
         
@@ -160,6 +161,13 @@ public class CoverageAppService {
      */
     public String getCurrentAlgorithm() {
         return algorithm;
+    }
+    
+    /**
+     * 设置算法名称，主要用于测试
+     */
+    public void setAlgorithm(String algorithm) {
+        this.algorithm = algorithm;
     }
     
     /**

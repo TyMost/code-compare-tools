@@ -116,7 +116,9 @@ public class DiffMapper {
             return defaultScanStrategy;
         }
         try {
-            return ScanStrategy.valueOf(requestDTO.getScanStrategy().trim().toUpperCase());
+            // 将连字符转换为下划线，支持 release-auto -> RELEASE_AUTO
+            String strategyName = requestDTO.getScanStrategy().trim().toUpperCase().replace("-", "_");
+            return ScanStrategy.valueOf(strategyName);
         } catch (IllegalArgumentException ex) {
             return defaultScanStrategy;
         }

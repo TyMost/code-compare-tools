@@ -52,5 +52,18 @@ public class ScanPresetProperties {
         private boolean snapshotIncludeRemoteRefs;
         private boolean snapshotIncludeTags;
         private Integer snapshotMaxRefs;
+        
+        // 添加兼容性方法
+        public boolean isSnapshotIncludeRemoteRefs() {
+            return snapshotIncludeRemoteRefs;
+        }
+        
+        public boolean isSnapshotIncludeTags() {
+            return snapshotIncludeTags;
+        }
+        
+        public Integer getSnapshotMaxRefs() {
+            return snapshotMaxRefs;
+        }
     }
 }

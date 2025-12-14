@@ -5,8 +5,6 @@ import com.example.migratediff.domain.diff.DiffSummary;
 import com.example.migratediff.infrastructure.persistence.DiffRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Repository;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -17,8 +15,6 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 /**
  * 基于文件系统的 DiffSummary 仓储实现。
  */
-@Repository
-@ConditionalOnProperty(prefix = "file-storage", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class FileSystemDiffRepository implements DiffRepository {
 
     private static final Logger log = LoggerFactory.getLogger(FileSystemDiffRepository.class);

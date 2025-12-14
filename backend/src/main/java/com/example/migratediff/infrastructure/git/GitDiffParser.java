@@ -18,9 +18,11 @@ public class GitDiffParser {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GitDiffParser.class);
     private final GitDiffAdapter gitDiffAdapter;
+    private final ScanFileFilter scanFileFilter;
 
-    public GitDiffParser(GitDiffAdapter gitDiffAdapter) {
+    public GitDiffParser(GitDiffAdapter gitDiffAdapter, ScanFileFilter scanFileFilter) {
         this.gitDiffAdapter = gitDiffAdapter;
+        this.scanFileFilter = scanFileFilter;
     }
 
     /**
@@ -31,8 +33,19 @@ public class GitDiffParser {
         if (entries == null || entries.isEmpty()) {
             return files;
         }
+
+        // 统计过滤信息
+        int totalCount = entries.size();
+        int filteredCount = 0;
+
         for (DiffEntry entry : entries) {
             try {
+                // 应用文件过滤
+                if (!scanFileFilter.shouldInclude(entry)) {
+                    filteredCount++;
+                    continue;
+                }
+
                 DiffFile diffFile = gitDiffAdapter.adapt(repository, formatter, entry, repoConfig);
                 if (diffFile != null) {
                     files.add(diffFile);
@@ -41,6 +54,13 @@ public class GitDiffParser {
                 LOGGER.warn("解析文件差异失败 [{} -> {}]: {}", entry.getOldPath(), entry.getNewPath(), ex.getMessage(), ex);
             }
         }
+
+        // 记录过滤统计信息
+        if (filteredCount > 0) {
+            LOGGER.info("文件过滤完成: 总文件数={}, 过滤掉={}, 保留={}", totalCount, filteredCount, files.size());
+            LOGGER.debug("排除模式: {}", scanFileFilter.getAllExcludePatterns());
+        }
+
         return files;
     }
 }

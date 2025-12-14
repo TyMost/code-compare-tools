@@ -19,4 +19,16 @@ public class DiffFile {
     private List<DiffBlock> blocks = new ArrayList<>();
     private DiffType diffType;
     private DeltaType deltaType;
+    
+    /**
+     * Git 提交哈希
+     * 用于 FullFileContextStrategy 等需要访问完整文件内容的情况
+     */
+    private String commitHash;
+    
+    /**
+     * Git 仓库路径
+     * 用于 FullFileContextStrategy 等需要访问完整文件内容的情况
+     */
+    private String repoPath;
 }

@@ -4,8 +4,6 @@ import com.example.migratediff.application.scan.ScanSnapshot;
 import com.example.migratediff.infrastructure.persistence.ScanSnapshotRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Repository;
 import org.springframework.util.StringUtils;
 
 import java.io.IOException;
@@ -19,8 +17,6 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Stream;
 
-@Repository
-@ConditionalOnProperty(prefix = "file-storage", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class FileSystemScanSnapshotRepository implements ScanSnapshotRepository {
 
     private static final Logger log = LoggerFactory.getLogger(FileSystemScanSnapshotRepository.class);

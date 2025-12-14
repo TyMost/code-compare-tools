@@ -9,11 +9,9 @@ import com.example.migratediff.infrastructure.config.GitScanProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
-import org.eclipse.jgit.api.ListBranchCommand;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -23,17 +21,14 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 /**
  * 基于时间窗口的自动 Release 分支差异扫描策略
  * 
- * 策略逻辑：
+ * 修复后的策略逻辑：
  * 1. Baseline 选择：master 窗口内最早 → master 窗口前最后 → 空结果
- * 2. EndCommit 选择：release 分支最新 → master 窗口内最晚 → 空结果
+ * 2. EndCommit 选择：最晚创建的release分支在窗口内最晚提交 → master 窗口内最晚 → 空结果
  * 3. 完全独立，不依赖 legacy snapshot 逻辑
  */
 @Slf4j
@@ -43,19 +38,32 @@ public class TimeBasedReleaseDiffStrategy {
     private final GitRepositoryHelper gitRepositoryHelper;
     private final GitDiffParser gitDiffParser;
     private final GitScanProperties gitScanProperties;
+    private final ParallelCommitSearcher parallelCommitSearcher;
+    private final CommitCache commitCache;
+    private final OptimizedBranchFilter optimizedBranchFilter;
+    private final ReleaseBranchAnalyzer releaseBranchAnalyzer;
 
     public TimeBasedReleaseDiffStrategy(GitRepositoryHelper gitRepositoryHelper,
                                         GitDiffParser gitDiffParser,
-                                        GitScanProperties gitScanProperties) {
+                                        GitScanProperties gitScanProperties,
+                                        ParallelCommitSearcher parallelCommitSearcher,
+                                        CommitCache commitCache,
+                                        OptimizedBranchFilter optimizedBranchFilter,
+                                        ReleaseBranchAnalyzer releaseBranchAnalyzer) {
         this.gitRepositoryHelper = gitRepositoryHelper;
         this.gitDiffParser = gitDiffParser;
         this.gitScanProperties = gitScanProperties;
+        this.parallelCommitSearcher = parallelCommitSearcher;
+        this.commitCache = commitCache;
+        this.optimizedBranchFilter = optimizedBranchFilter;
+        this.releaseBranchAnalyzer = releaseBranchAnalyzer;
     }
 
     /**
      * 执行 release-auto 扫描
      */
     public DiffSummary scan(RepoConfig repoConfig) {
+        long startTimeMs = System.currentTimeMillis();
         DiffSummary emptySummary = buildEmptySummary(repoConfig);
         
         if (!validateConfig(repoConfig)) {
@@ -81,22 +89,44 @@ public class TimeBasedReleaseDiffStrategy {
                 return emptySummary;
             }
 
+            // 打印扫描开始信息
+            logScanStartInfo(repoConfig, startTime, endTime);
+
             // Step 1: 选择 baseline
-            ObjectId baseline = selectBaseline(repository, startTime, endTime);
-            if (baseline == null) {
+            long baselineStartTime = System.currentTimeMillis();
+            CommitSelectionResult baselineResult = selectBaselineWithBranch(repository, startTime, endTime);
+            long baselineEndTime = System.currentTimeMillis();
+            
+            if (baselineResult == null || baselineResult.getCommit() == null) {
                 log.warn("TimeBasedReleaseDiff: no valid baseline found for time window, return empty diff");
                 return emptySummary;
             }
 
             // Step 2: 选择 endCommit
-            ObjectId endCommit = selectEndCommit(repository, startTime, endTime);
-            if (endCommit == null) {
+            long endCommitStartTime = System.currentTimeMillis();
+            CommitSelectionResult endCommitResult = selectEndCommitWithBranch(repository, startTime, endTime);
+            long endCommitEndTime = System.currentTimeMillis();
+            
+            if (endCommitResult == null || endCommitResult.getCommit() == null) {
                 log.warn("TimeBasedReleaseDiff: no end commit found, return empty diff");
                 return emptySummary;
             }
 
+            // 打印选择的提交信息（包含分支信息）
+            logSelectedCommitsWithBranches(
+                baselineResult.getCommit(), baselineResult.getBranchName(),
+                endCommitResult.getCommit(), endCommitResult.getBranchName(),
+                baselineEndTime - baselineStartTime, endCommitEndTime - endCommitStartTime);
+
             // Step 3: 执行 diff
-            return executeDiff(repository, repoConfig, baseline, endCommit);
+            long diffStartTime = System.currentTimeMillis();
+            DiffSummary result = executeDiff(repository, repoConfig, baselineResult.getCommit(), endCommitResult.getCommit());
+            long diffEndTime = System.currentTimeMillis();
+            
+            // 打印总体扫描结果
+            logScanResult(result, diffEndTime - diffStartTime, System.currentTimeMillis() - startTimeMs);
+            
+            return result;
 
         } catch (Exception ex) {
             log.warn("TimeBasedReleaseDiff: scan failed: {}", ex.getMessage(), ex);
@@ -123,291 +153,111 @@ public class TimeBasedReleaseDiffStrategy {
     /**
      * Step 1: 选择 baseline（diff 起点）
      * 优先级：主分支窗口内最早 → 主分支窗口前最后 → null
+     * 优化版本：使用并行搜索和缓存
      */
     private ObjectId selectBaseline(Repository repository, Instant startTime, Instant endTime) throws IOException {
+        CommitSelectionResult result = selectBaselineWithBranch(repository, startTime, endTime);
+        return result != null ? result.getCommit() : null;
+    }
+
+    /**
+     * Step 1: 选择 baseline（diff 起点）- 带分支信息版本
+     * 优先级：主分支窗口内最早 → 主分支窗口前最后 → null
+     * 优化版本：使用并行搜索和缓存
+     */
+    private CommitSelectionResult selectBaselineWithBranch(Repository repository, Instant startTime, Instant endTime) throws IOException {
         List<String> mainBranches = gitScanProperties.getMainBranches();
+        String repoPath = repository.getDirectory() != null ? repository.getDirectory().getAbsolutePath() : "unknown";
         
-        // 1. 主分支在窗口内最早提交
-        for (String branch : mainBranches) {
-            ObjectId earliest = findCommitInRange(repository, branch, startTime, endTime, true);
-            if (earliest != null) {
-                log.info("TimeBasedReleaseDiff: selected baseline from {} in window: {}", branch, earliest.name());
-                return earliest;
-            }
+        // 1. 并行搜索主分支在窗口内最早提交
+        ParallelCommitSearcher.ParallelSearchResult earliestResults = 
+            parallelCommitSearcher.searchCommitsInParallel(repository, mainBranches, startTime, endTime, true);
+        
+        ObjectId earliest = earliestResults.getFirstFoundCommit();
+        String earliestBranch = getBranchForCommit(earliestResults, earliest);
+        if (earliest != null) {
+            log.info("TimeBasedReleaseDiff: selected baseline from main branches in window: {} (branch: {})", earliest.name(), earliestBranch);
+            earliestResults.logResults("Baseline-Earliest");
+            return CommitSelectionResult.of(earliest, earliestBranch);
         }
 
-        // 2. fallback: 主分支在窗口前最后提交
-        for (String branch : mainBranches) {
-            ObjectId lastBefore = findLastCommitBefore(repository, branch, startTime);
-            if (lastBefore != null) {
-                log.info("TimeBasedReleaseDiff: selected baseline fallback from {} before window: {}", branch, lastBefore.name());
-                return lastBefore;
-            }
+        // 2. fallback: 并行搜索主分支在窗口前最后提交
+        ParallelCommitSearcher.ParallelSearchResult lastBeforeResults = 
+            parallelCommitSearcher.searchLastCommitsBeforeParallel(repository, mainBranches, startTime);
+        
+        ObjectId lastBefore = lastBeforeResults.getFirstFoundCommit();
+        String lastBeforeBranch = getBranchForCommit(lastBeforeResults, lastBefore);
+        if (lastBefore != null) {
+            log.info("TimeBasedReleaseDiff: selected baseline fallback from main branches before window: {} (branch: {})", lastBefore.name(), lastBeforeBranch);
+            lastBeforeResults.logResults("Baseline-LastBefore");
+            return CommitSelectionResult.of(lastBefore, lastBeforeBranch);
         }
 
-        // 3. 无有效 baseline
-        return null;
+        //3. 无有效 baseline
+        return CommitSelectionResult.empty();
     }
 
     /**
      * Step 2: 选择 endCommit（diff 终点）
-     * 优先级：release 分支最新 → 主分支窗口内最晚 → null
+     * 修复后的逻辑：使用ReleaseBranchAnalyzer选择最晚创建的release分支
+     * 优先级：最晚创建的release分支在窗口内最晚提交 → 主分支窗口内最晚 → null
      */
     private ObjectId selectEndCommit(Repository repository, Instant startTime, Instant endTime) throws IOException {
+        CommitSelectionResult result = selectEndCommitWithBranch(repository, startTime, endTime);
+        return result != null ? result.getCommit() : null;
+    }
+
+    /**
+     * Step 2: 选择 endCommit（diff 终点）- 带分支信息版本
+     * 修复后的逻辑：使用ReleaseBranchAnalyzer选择最晚创建的release分支
+     * 优先级：最晚创建的release分支在窗口内最晚提交 → 主分支窗口内最晚 → null
+     */
+    private CommitSelectionResult selectEndCommitWithBranch(Repository repository, Instant startTime, Instant endTime) throws IOException {
         String releasePattern = gitScanProperties.getReleasePattern();
         
-        // 1. 找 release 分支在窗口内最晚提交
-        ObjectId latestRelease = findLatestReleaseCommitInWindow(repository, releasePattern, startTime, endTime);
-        if (latestRelease != null) {
-            log.info("TimeBasedReleaseDiff: selected endCommit from release branch: {}", latestRelease.name());
-            return latestRelease;
+        // 1. 使用新的ReleaseBranchAnalyzer选择最晚创建的release分支
+        try {
+            CommitSelectionResult releaseResult = releaseBranchAnalyzer.selectLatestCreatedReleaseBranch(
+                    repository, releasePattern, startTime, endTime);
+            if (releaseResult != null && releaseResult.getCommit() != null) {
+                log.info("TimeBasedReleaseDiff: selected endCommit from latest created release branch: {} (branch: {})", 
+                        releaseResult.getCommit().name(), releaseResult.getBranchName());
+                return releaseResult;
+            }
+        } catch (Exception ex) {
+            log.warn("ReleaseBranchAnalyzer failed, falling back to main branches: {}", ex.getMessage());
         }
 
-        // 2. fallback: 主分支在窗口内最晚提交
+        // 2. fallback: 并行搜索主分支在窗口内最晚提交
         List<String> mainBranches = gitScanProperties.getMainBranches();
-        for (String branch : mainBranches) {
-            ObjectId latest = findCommitInRange(repository, branch, startTime, endTime, false);
-            if (latest != null) {
-                log.info("TimeBasedReleaseDiff: selected endCommit fallback from {} in window: {}", branch, latest.name());
-                return latest;
-            }
+        ParallelCommitSearcher.ParallelSearchResult latestResults = 
+            parallelCommitSearcher.searchCommitsInParallel(repository, mainBranches, startTime, endTime, false);
+        
+        ObjectId latest = latestResults.getFirstFoundCommit();
+        String latestBranch = getBranchForCommit(latestResults, latest);
+        if (latest != null) {
+            log.info("TimeBasedReleaseDiff: selected endCommit fallback from main branches in window: {} (branch: {})", latest.name(), latestBranch);
+            latestResults.logResults("EndCommit-MainBranches");
+            return CommitSelectionResult.of(latest, latestBranch);
         }
 
         // 3. 无有效 endCommit
-        return null;
+        return CommitSelectionResult.empty();
     }
 
     /**
-     * 在时间窗口内查找指定分支的提交
-     * @param earliest 为 true 返回最早，false 返回最晚
+     * 从并行搜索结果中获取对应的分支名称
      */
-    private ObjectId findCommitInRange(Repository repository, String branchName, 
-                                     Instant startTime, Instant endTime, boolean earliest) throws IOException {
-        Git git = null;
-        RevWalk revWalk = null;
-        try {
-            git = new Git(repository);
-            
-            // 查找分支引用
-            Ref branchRef = git.getRepository().findRef("refs/heads/" + branchName);
-            if (branchRef == null) {
-                // 尝试远程分支
-                branchRef = git.getRepository().findRef("refs/remotes/origin/" + branchName);
-            }
-            if (branchRef == null) {
-                return null;
-            }
-
-            ObjectId branchId = branchRef.getObjectId();
-            if (branchId == null) {
-                return null;
-            }
-
-            ObjectId targetCommit = null;
-
-            revWalk = new RevWalk(repository);
-            RevCommit commit = revWalk.parseCommit(branchId);
-
-            // 遍历提交历史
-            revWalk.reset();
-            revWalk.markStart(commit);
-            
-            for (RevCommit current : revWalk) {
-                Instant commitTime = Instant.ofEpochSecond(current.getCommitTime());
-                
-                // 检查是否在时间窗口内
-                if (!commitTime.isBefore(startTime) && !commitTime.isAfter(endTime)) {
-                    if (targetCommit == null) {
-                        targetCommit = current.getId();
-                    }
-                    
-                    if (earliest) {
-                        // 找最早的，一旦找到就停止
-                        break;
-                    } else {
-                        // 找最晚的，继续遍历
-                        targetCommit = current.getId();
-                    }
-                } else if (commitTime.isBefore(startTime)) {
-                    // 超出时间窗口，停止遍历
-                    break;
-                }
-            }
-
-            return targetCommit;
-        } finally {
-            if (git != null) {
-                git.close();
-            }
-            if (revWalk != null) {
-                revWalk.close();
-            }
-        }
-    }
-
-    /**
-     * 查找指定分支在指定时间之前的最后一个提交
-     */
-    private ObjectId findLastCommitBefore(Repository repository, String branchName, Instant startTime) throws IOException {
-        Git git = null;
-            RevWalk revWalk = null;
-        try {
-            git = new Git(repository);
-            
-            // 查找分支引用
-            Ref branchRef = git.getRepository().findRef("refs/heads/" + branchName);
-            if (branchRef == null) {
-                // 尝试远程分支
-                branchRef = git.getRepository().findRef("refs/remotes/origin/" + branchName);
-            }
-            if (branchRef == null) {
-                return null;
-            }
-
-            ObjectId branchId = branchRef.getObjectId();
-            if (branchId == null) {
-                return null;
-            }
-
-            ObjectId lastBefore = null;
-
-            revWalk = new RevWalk(repository);
-            RevCommit commit = revWalk.parseCommit(branchId);
-
-            // 遍历提交历史
-            revWalk.reset();
-            revWalk.markStart(commit);
-            
-            for (RevCommit current : revWalk) {
-                Instant commitTime = Instant.ofEpochSecond(current.getCommitTime());
-                
-                if (commitTime.isBefore(startTime)) {
-                    lastBefore = current.getId();
-                    break;
-                }
-            }
-
-            return lastBefore;
-        } finally {
-            if (git != null) {
-                git.close();
-            }
-            if (revWalk != null) {
-                revWalk.close();
-            }
-        }
-    }
-
-    /**
-     * 过滤 release 分支（包含本地和远程分支）
-     */
-    private List<Ref> filterReleaseBranches(Repository repository, String releasePattern) throws IOException {
-        Pattern pattern = Pattern.compile(releasePattern.replace("*", ".*"));
-        
-        Git git = null;
-        try {
-            git = new Git(repository);
-            List<Ref> branches;
-            try {
-                // 获取所有分支（包括远程分支）
-                branches = git.branchList().setListMode(ListBranchCommand.ListMode.ALL).call();
-            } catch (GitAPIException ex) {
-                log.warn("Failed to list branches: {}", ex.getMessage());
-                return new ArrayList<>();
-            }
-            
-            return branches.stream()
-                    .filter(ref -> {
-                        String branchName = ref.getName();
-                        // 支持本地分支 refs/heads/ 和远程分支 refs/remotes/origin/
-                        if (branchName.startsWith("refs/heads/")) {
-                            branchName = branchName.substring("refs/heads/".length());
-                            return pattern.matcher(branchName).matches();
-                        } else if (branchName.startsWith("refs/remotes/origin/")) {
-                            branchName = branchName.substring("refs/remotes/origin/".length());
-                            return pattern.matcher(branchName).matches();
-                        }
-                        return false;
-                    })
-                    .collect(Collectors.toList());
-        } finally {
-            if (git != null) {
-                git.close();
-            }
-        }
-    }
-
-    /**
-     * 选择时间窗口内创建时间最晚的 release 分支，并返回其最晚提交
-     */
-    private ObjectId findLatestReleaseCommitInWindow(Repository repository, String releasePattern, 
-                                                    Instant startTime, Instant endTime) throws IOException {
-        List<Ref> releaseBranches = filterReleaseBranches(repository, releasePattern);
-        if (releaseBranches.isEmpty()) {
-            log.debug("No release branches found matching pattern: {}", releasePattern);
+    private String getBranchForCommit(ParallelCommitSearcher.ParallelSearchResult searchResult, ObjectId commit) {
+        if (commit == null || searchResult == null) {
             return null;
         }
-
-        ObjectId latestCommit = null;
-        Instant latestBranchCreation = null;
-
-        Git git = null;
-        RevWalk revWalk = null;
-        try {
-            git = new Git(repository);
-            revWalk = new RevWalk(repository);
-
-            for (Ref branchRef : releaseBranches) {
-                try {
-                    ObjectId branchId = branchRef.getObjectId();
-                    if (branchId == null) {
-                        continue;
-                    }
-
-                    RevCommit commit = revWalk.parseCommit(branchId);
-                    
-                    // 提取分支名称（支持本地和远程分支）
-                    String branchName;
-                    if (branchRef.getName().startsWith("refs/heads/")) {
-                        branchName = branchRef.getName().substring("refs/heads/".length());
-                    } else if (branchRef.getName().startsWith("refs/remotes/origin/")) {
-                        branchName = branchRef.getName().substring("refs/remotes/origin/".length());
-                    } else {
-                        continue;
-                    }
-                    
-                    // 找到该分支在时间窗口内的最晚提交
-                    ObjectId branchLatest = findCommitInRange(
-                        repository, 
-                        branchName,
-                        startTime, 
-                        endTime, 
-                        false
-                    );
-                    
-                    if (branchLatest != null) {
-                        RevCommit latestCommitObj = revWalk.parseCommit(branchLatest);
-                        Instant branchCreationTime = Instant.ofEpochSecond(latestCommitObj.getCommitTime());
-                        
-                        if (latestBranchCreation == null || branchCreationTime.isAfter(latestBranchCreation)) {
-                            latestBranchCreation = branchCreationTime;
-                            latestCommit = branchLatest;
-                        }
-                    }
-                } catch (Exception ex) {
-                    log.warn("Failed to process release branch {}: {}", branchRef.getName(), ex.getMessage());
-                }
-            }
-        } finally {
-            if (git != null) {
-                git.close();
-            }
-            if (revWalk != null) {
-                revWalk.close();
-            }
-        }
-
-        return latestCommit;
+        
+        return searchResult.getResults().stream()
+                .filter(result -> result.isFound() && result.getCommit().equals(commit))
+                .map(ParallelCommitSearcher.BranchSearchResult::getBranchName)
+                .findFirst()
+                .orElse(null);
     }
 
     /**
@@ -479,6 +329,78 @@ public class TimeBasedReleaseDiffStrategy {
                 .getConfig()
                 .getSubsections("remote")
                 .contains(remoteName);
+    }
+
+    /**
+     * 打印扫描开始信息
+     */
+    private void logScanStartInfo(RepoConfig repoConfig, Instant startTime, Instant endTime) {
+        String repoPath = repoConfig.getRepoPath() != null ? repoConfig.getRepoPath().getAbsolutePath() : "unknown";
+        log.info("=== Release-Auto 扫描开始 (修复版本) ===");
+        log.info("仓库路径: {}", repoPath);
+        log.info("时间范围: {} 至 {}", startTime != null ? startTime.toString() : "未设置", endTime != null ? endTime.toString() : "未设置");
+        log.info("主分支配置: {}", gitScanProperties.getMainBranches());
+        log.info("Release分支模式: {}", gitScanProperties.getReleasePattern());
+        log.info("=========================");
+    }
+
+    /**
+     * 打印带有分支信息的提交选择结果
+     */
+    private void logSelectedCommitsWithBranches(ObjectId baseline, String baselineBranch, 
+                                           ObjectId endCommit, String endCommitBranch, 
+                                           long baselineTime, long endCommitTime) {
+        log.info("=== Release-Auto 提交选择详情 (修复版本) ===");
+        log.info("基准提交 (baseline): {} (分支: {})", 
+                baseline != null ? baseline.name() : "未找到", 
+                baselineBranch != null ? baselineBranch : "未知");
+        log.info("目标提交 (endCommit): {} (分支: {})", 
+                endCommit != null ? endCommit.name() : "未找到", 
+                endCommitBranch != null ? endCommitBranch : "未知");
+        log.info("Baseline选择耗时: {} ms", baselineTime);
+        log.info("EndCommit选择耗时: {} ms", endCommitTime);
+        
+        if (baseline != null && endCommit != null) {
+            log.info("时间区间: {} 至 {}", 
+                    baselineBranch != null ? baselineBranch : "未知分支",
+                    endCommitBranch != null ? endCommitBranch : "未知分支");
+        }
+        log.info("===============================");
+    }
+
+    /**
+     * 打印扫描结果
+     */
+    private void logScanResult(DiffSummary result, long diffTime, long totalTime) {
+        log.info("=== Release-Auto 扫描完成 (修复版本) ===");
+        if (result != null) {
+            log.info("基准提交: {}", result.getBaseCommitId());
+            log.info("目标提交: {}", result.getTargetCommitId());
+            log.info("差异文件数量: {}", result.getDiffFiles() != null ? result.getDiffFiles().size() : 0);
+        }
+        log.info("Diff生成耗时: {} ms", diffTime);
+        log.info("总扫描耗时: {} ms", totalTime);
+        log.info("==========================");
+    }
+
+    /**
+     * 获取性能统计信息
+     */
+    public String getPerformanceStats() {
+        CommitCache.CacheStats cacheStats = commitCache.getStats();
+        OptimizedBranchFilter.BranchFilterStats filterStats = optimizedBranchFilter.getStats();
+        
+        return String.format("Performance Stats - %s, %s", cacheStats.toString(), filterStats.toString());
+    }
+
+    /**
+     * 清空所有缓存
+     */
+    public void clearAllCaches() {
+        commitCache.clearAll();
+        optimizedBranchFilter.clearAllCache();
+        releaseBranchAnalyzer.cleanExpiredCache();
+        log.info("All caches cleared for TimeBasedReleaseDiffStrategy");
     }
 
     /**

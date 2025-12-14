@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>缓存修复验证</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        pre { background: #f5f5f5; padding: 10px; overflow-x: auto; }
+        button { padding: 8px 16px; margin: 5px; cursor: pointer; }
+        .cache-item { margin: 10px 0; padding: 10px; background: #f9f9f9; border-left: 3px solid #007bff; }
+    </style>
+</head>
+<body>
+    <h1>前端缓存修复验证</h1>
+    
+    <div class="section">
+        <h2>1. API连接测试</h2>
+        <button onclick="testBackendAPI()">测试后端API</button>
+        <button onclick="testFrontendAPI()">测试前端代理API</button>
+        <div id="api-result"></div>
+    </div>
+    
+    <div class="section">
+        <h2>2. 缓存数据检查</h2>
+        <button onclick="loadCacheData()">加载缓存数据</button>
+        <div id="cache-result"></div>
+    </div>
+    
+    <div class="section">
+        <h2>3. 前端应用测试</h2>
+        <p>请访问 <a href="http://localhost:8082" target="_blank">http://localhost:8082</a> 进行完整测试</p>
+        <ul>
+            <li>检查仓库列表是否正确显示</li>
+            <li>检查是否能加载缓存的扫描结果</li>
+            <li>检查切换仓库时数据是否正确显示</li>
+            <li>检查文件详情是否能正常加载</li>
+        </ul>
+    </div>
+
+    <script>
+        async function testBackendAPI() {
+            const resultDiv = document.getElementById('api-result');
+            try {
+                const response = await fetch('http://localhost:8081/api/scan/cache');
+                const data = await response.json();
+                resultDiv.innerHTML = `
+                    <div class="success">✓ 后端API连接成功</div>
+                    <div class="info">缓存数据数量: ${data.data ? data.data.length : 0}</div>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">✗ 后端API连接失败: ${error.message}</div>`;
+            }
+        }
+
+        async function testFrontendAPI() {
+            const resultDiv = document.getElementById('api-result');
+            try {
+                const response = await fetch('http://localhost:8082/api/scan/cache');
+                const data = await response.json();
+                resultDiv.innerHTML = `
+                    <div class="success">✓ 前端代理API连接成功</div>
+                    <div class="info">缓存数据数量: ${data.data ? data.data.length : 0}</div>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">✗ 前端代理API连接失败: ${error.message}</div>`;
+            }
+        }
+
+        async function loadCacheData() {
+            const resultDiv = document.getElementById('cache-result');
+            try {
+                const response = await fetch('http://localhost:8082/api/scan/cache');
+                const data = await response.json();
+                
+                if (!data.data || !Array.isArray(data.data)) {
+                    throw new Error('缓存数据格式错误');
+                }
+
+                let html = `<div class="success">✓ 缓存数据加载成功，共 ${data.data.length} 条记录</div>`;
+                
+                data.data.forEach((snapshot, index) => {
+                    const repoId = snapshot.repoId || snapshot.taskId || '未知';
+                    const hasData = !!snapshot.response;
+                    const summary = snapshot.response?.summary || {};
+                    
+                    html += `
+                        <div class="cache-item">
+                            <h4>缓存 ${index + 1}: ${repoId}</h4>
+                            <ul>
+                                <li><strong>RepoId:</strong> ${snapshot.repoId || 'null'}</li>
+                                <li><strong>TaskId:</strong> ${snapshot.taskId || 'null'}</li>
+                                <li><strong>Mode:</strong> ${snapshot.mode || '未知'}</li>
+                                <li><strong>Persisted:</strong> ${snapshot.persisted ? '是' : '否'}</li>
+                                <li><strong>Has Response:</strong> ${hasData ? '是' : '否'}</li>
+                                ${hasData ? `
+                                    <li><strong>总文件数:</strong> ${summary.totalFiles || 0}</li>
+                                    <li><strong>匹配文件:</strong> ${summary.matched || 0}</li>
+                                    <li><strong>覆盖率:</strong> ${summary.overallCoverage || 0}</li>
+                                    <li><strong>Detailed Data:</strong> ${snapshot.response.diffMatrix ? snapshot.response.diffMatrix.length + ' files' : 'No diff matrix'}</li>
+                                ` : ''}
+                            </ul>
+                        </div>
+                    `;
+                });
+                
+                resultDiv.innerHTML = html;
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">✗ 加载缓存数据失败: ${error.message}</div>`;
+            }
+        }
+
+        // 页面加载时自动测试
+        window.onload = function() {
+            setTimeout(() => {
+                testBackendAPI();
+                loadCacheData();
+            }, 1000);
+        };
+    </script>
+</body>
+</html>

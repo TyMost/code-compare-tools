@@ -1,5 +1,6 @@
 package com.example.migratediff.domain.coverage;
 
+import com.example.migratediff.domain.coverage.optimization.OptimizationResult;
 import com.example.migratediff.domain.diff.DiffBlock;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -40,6 +41,13 @@ public class BlockMapping {
     @Builder.Default
     private List<MatchDetail> matchDetails = new ArrayList<>();
     
+    /** 优化历史记录 */
+    @Builder.Default
+    private Map<DiffBlock, List<OptimizationResult>> optimizationHistory = new HashMap<>();
+    
+    /** 优化汇总信息 */
+    private Object optimizationSummary;
+    
     /**
      * 添加一个匹配关系
      */
@@ -48,6 +56,20 @@ public class BlockMapping {
         similarities.put(oracleBlock, similarity);
         // 同时更新matchDetails
         matchDetails.add(new MatchDetail(oracleBlock, gaussBlock, similarity));
+    }
+    
+    /**
+     * 添加一个匹配关系（仅块映射，不包含相似度）
+     */
+    public void addMatch(DiffBlock oracleBlock, DiffBlock gaussBlock) {
+        oracleToGauss.put(oracleBlock, gaussBlock);
+    }
+    
+    /**
+     * 添加相似度信息
+     */
+    public void addSimilarity(DiffBlock oracleBlock, Double similarity) {
+        similarities.put(oracleBlock, similarity);
     }
     
     /**
@@ -80,6 +102,21 @@ public class BlockMapping {
      */
     public double getSimilarity(DiffBlock oracleBlock) {
         return similarities.getOrDefault(oracleBlock, 0.0);
+    }
+    
+    /**
+     * 更新相似度（用于优化后）
+     */
+    public void updateSimilarity(DiffBlock oracleBlock, double newSimilarity) {
+        similarities.put(oracleBlock, newSimilarity);
+        
+        // 更新matchDetails中的相似度
+        for (MatchDetail detail : matchDetails) {
+            if (detail.getOracleBlock().equals(oracleBlock)) {
+                detail.setSimilarity(newSimilarity);
+                break;
+            }
+        }
     }
     
     /**
@@ -139,6 +176,75 @@ public class BlockMapping {
     @Deprecated
     public List<MatchDetail> getMatchDetails() {
         return new ArrayList<>(matchDetails);
+    }
+    
+    /**
+     * 添加优化结果记录
+     */
+    public void addOptimizationResult(DiffBlock block, OptimizationResult result) {
+        optimizationHistory.computeIfAbsent(block, k -> new ArrayList<>()).add(result);
+    }
+    
+    /**
+     * 获取块的优化历史
+     */
+    public List<OptimizationResult> getOptimizationHistory(DiffBlock block) {
+        return optimizationHistory.getOrDefault(block, new ArrayList<>());
+    }
+    
+    /**
+     * 添加发现的匹配关系
+     * 用于发现模式中创建的新匹配
+     */
+    public void addDiscoveredMatch(DiffBlock oracleBlock, DiffBlock gaussBlock, double similarity) {
+        addMatch(oracleBlock, gaussBlock, similarity);
+        // 从未匹配列表中移除
+        if (unmatchedOracle.contains(oracleBlock)) {
+            unmatchedOracle.remove(oracleBlock);
+        }
+        if (unmatchedGauss.contains(gaussBlock)) {
+            unmatchedGauss.remove(gaussBlock);
+        }
+    }
+    
+    /**
+     * 检查匹配是否为发现的
+     */
+    public boolean isDiscoveredMatch(DiffBlock oracleBlock) {
+        // 检查优化历史中是否有发现记录
+        List<OptimizationResult> history = optimizationHistory.get(oracleBlock);
+        if (history != null) {
+            for (OptimizationResult result : history) {
+                if (result.getDetails() != null && 
+                    result.getDetails().containsKey("discovered") && 
+                    Boolean.TRUE.equals(result.getDetails().get("discovered"))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    
+    /**
+     * 复制块映射（创建深拷贝用于优化）
+     */
+    public BlockMapping copy() {
+        BlockMapping copy = BlockMapping.builder()
+                .oracleToGauss(new HashMap<>(oracleToGauss))
+                .similarities(new HashMap<>(similarities))
+                .unmatchedOracle(new ArrayList<>(unmatchedOracle))
+                .unmatchedGauss(new ArrayList<>(unmatchedGauss))
+                .matchDetails(new ArrayList<>(matchDetails))
+                .optimizationHistory(new HashMap<>())
+                .optimizationSummary(optimizationSummary)
+                .build();
+        
+        // 深拷贝优化历史
+        optimizationHistory.forEach((block, results) -> {
+            copy.optimizationHistory.put(block, new ArrayList<>(results));
+        });
+        
+        return copy;
     }
     
     /**

@@ -4,43 +4,35 @@ import com.example.migratediff.application.scan.ScanReport;
 import com.example.migratediff.infrastructure.persistence.ScanReportRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Repository;
-import org.springframework.util.StringUtils;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.stream.Stream;
 
-@Repository
-@ConditionalOnProperty(prefix = "file-storage", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class FileSystemScanReportRepository implements ScanReportRepository {
 
     private static final Logger log = LoggerFactory.getLogger(FileSystemScanReportRepository.class);
-    private static final String REPORT_DIRECTORY = "scan-reports";
+    private static final String SCAN_REPORTS_DIRECTORY = "scan-reports";
 
     private final FileStorageSupport storageSupport;
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
     public FileSystemScanReportRepository(FileStorageSupport storageSupport) {
         this.storageSupport = storageSupport;
-        storageSupport.ensureDirectory(storageSupport.resolve(REPORT_DIRECTORY));
+        storageSupport.ensureDirectory(storageSupport.resolve(SCAN_REPORTS_DIRECTORY));
     }
 
     @Override
     public void save(ScanReport report) {
-        if (report == null || !StringUtils.hasText(report.getTaskId())) {
+        if (report == null) {
             return;
         }
         lock.writeLock().lock();
         try {
-            Path target = resolvePath(report.getTaskId());
+            Path target = resolvePath(report);
             storageSupport.writeJson(target, report);
-            log.debug("持久化扫描报告: {}", target);
+            log.debug("已持久化扫描报告: {}", target);
         } finally {
             lock.writeLock().unlock();
         }
@@ -48,13 +40,10 @@ public class FileSystemScanReportRepository implements ScanReportRepository {
 
     @Override
     public Optional<ScanReport> find(String taskId) {
-        if (!StringUtils.hasText(taskId)) {
-            return Optional.empty();
-        }
         lock.readLock().lock();
         try {
-            Path target = resolvePath(taskId);
-            return storageSupport.readJson(target, ScanReport.class);
+            Path filePath = storageSupport.resolve(SCAN_REPORTS_DIRECTORY, SafeFileNameEncoder.encode(taskId) + ".json");
+            return storageSupport.readJson(filePath, ScanReport.class);
         } finally {
             lock.readLock().unlock();
         }
@@ -62,13 +51,10 @@ public class FileSystemScanReportRepository implements ScanReportRepository {
 
     @Override
     public void delete(String taskId) {
-        if (!StringUtils.hasText(taskId)) {
-            return;
-        }
         lock.writeLock().lock();
         try {
-            Path target = resolvePath(taskId);
-            storageSupport.deleteIfExists(target);
+            Path filePath = storageSupport.resolve(SCAN_REPORTS_DIRECTORY, SafeFileNameEncoder.encode(taskId) + ".json");
+            storageSupport.deleteIfExists(filePath);
         } finally {
             lock.writeLock().unlock();
         }
@@ -78,21 +64,22 @@ public class FileSystemScanReportRepository implements ScanReportRepository {
     public void deleteAll() {
         lock.writeLock().lock();
         try {
-            Path directory = storageSupport.resolve(REPORT_DIRECTORY);
-            if (!Files.exists(directory)) {
-                return;
-            }
-            try (Stream<Path> stream = Files.list(directory)) {
-                stream.filter(Files::isRegularFile).forEach(storageSupport::deleteIfExists);
-            } catch (IOException ex) {
-                throw new FilePersistenceException("清理扫描报告目录失败: " + directory, ex);
+            Path directory = storageSupport.resolve(SCAN_REPORTS_DIRECTORY);
+            if (java.nio.file.Files.exists(directory)) {
+                try (java.util.stream.Stream<java.nio.file.Path> stream = java.nio.file.Files.list(directory)) {
+                    stream.filter(java.nio.file.Files::isRegularFile)
+                            .forEach(storageSupport::deleteIfExists);
+                } catch (java.io.IOException ex) {
+                    throw new FilePersistenceException("清理扫描报告目录失败: " + directory, ex);
+                }
             }
         } finally {
             lock.writeLock().unlock();
         }
     }
 
-    private Path resolvePath(String taskId) {
-        return storageSupport.resolve(REPORT_DIRECTORY, SafeFileNameEncoder.encode(taskId) + ".json");
+    private Path resolvePath(ScanReport report) {
+        String safeName = SafeFileNameEncoder.encode(report.getTaskId());
+        return storageSupport.resolve(SCAN_REPORTS_DIRECTORY, safeName + ".json");
     }
 }

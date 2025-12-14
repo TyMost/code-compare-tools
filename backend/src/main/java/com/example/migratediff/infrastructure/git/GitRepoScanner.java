@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.util.StringUtils;
 
 import java.io.IOException;
 import java.time.Instant;
@@ -179,6 +180,16 @@ public class GitRepoScanner {
         if (!exportEnabled || diffRepository == null || summary == null) {
             return;
         }
+        
+        // 预检查：确保必要的标识符存在
+        if (!StringUtils.hasText(summary.getBaseCommitId()) || !StringUtils.hasText(summary.getTargetCommitId())) {
+            LOGGER.warn("Skipping persist due to missing commit IDs: base={}, target={}, repo={}",
+                    summary.getBaseCommitId(),
+                    summary.getTargetCommitId(),
+                    safeRepoPath(summary.getRepoConfig()));
+            return;
+        }
+        
         try {
             diffRepository.save(summary);
             LOGGER.debug("Persisted summary for repo={}, base={}, target={}",

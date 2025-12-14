@@ -32,11 +32,10 @@
         </el-select>
         
         <!-- 下拉菜单式刷新按钮 -->
-        <el-dropdown @command="handleRefreshCommand" :disabled="!currentRepoId">
+        <el-dropdown @command="handleRefreshCommand">
           <el-button 
             size="mini" 
             :loading="isScanning || batchRefreshing"
-            :disabled="!currentRepoId"
           >
             🔄 {{ isScanning || batchRefreshing ? '刷新中...' : '刷新' }}
             <i class="el-icon-arrow-down el-icon--right"></i>
@@ -46,7 +45,11 @@
               <i class="el-icon-refresh"></i>
               刷新当前仓库
             </el-dropdown-item>
-            <el-dropdown-item command="all" divided>
+            <el-dropdown-item command="cache" divided>
+              <i class="el-icon-download"></i>
+              刷新缓存
+            </el-dropdown-item>
+            <el-dropdown-item command="all" divided :disabled="!availableRepos.length">
               <i class="el-icon-refresh"></i>
               刷新所有仓库
             </el-dropdown-item>
@@ -71,6 +74,16 @@
           @click="showAddConfigDialog"
         >
           ➕ 添加配置
+        </el-button>
+        
+        <!-- 异步导出任务管理器按钮 -->
+        <el-button
+          size="mini"
+          type="warning"
+          plain
+          @click="showAsyncTaskManager = true"
+        >
+          📋 导出任务
         </el-button>
       </div>
 
@@ -195,6 +208,9 @@
     <multi-repo-export-dialog
       :visible.sync="showMultiExportDialog"
     />
+    
+    <!-- 异步导出任务管理器 -->
+    <async-export-task-manager v-if="showAsyncTaskManager" />
 
     <!-- 新增：添加配置对话框 -->
     <el-dialog 
@@ -285,6 +301,7 @@ import { mapState, mapGetters } from 'vuex';
 import DiffMatrix from '../components/DiffMatrix.vue';
 import DiffMatrixFilters from '../components/DiffMatrixFilters.vue';
 import MultiRepoExportDialog from '../components/MultiRepoExportDialog.vue';
+import AsyncExportTaskManager from '../components/AsyncExportTaskManager.vue';
 
 export default {
   name: 'DashboardPage',
@@ -292,13 +309,16 @@ export default {
     DiffMatrix,
     DiffMatrixFilters,
     MultiRepoExportDialog,
+    AsyncExportTaskManager,
   },
   data() {
     return {
       isInitializing: false, // 添加本地初始化状态
       showMultiExportDialog: false,
+      showAsyncTaskManager: false,
       showAddConfig: false,
       saving: false,
+      hasAutoRefreshed: false, // 标记是否已自动刷新缓存
       newConfig: {
         name: '',
         sourcePath: '',
@@ -362,6 +382,23 @@ export default {
   },
   async created() {
     await this.initializeDashboard();
+    
+    // 延迟执行自动缓存刷新，确保页面完全加载
+    setTimeout(() => {
+      this.autoRefreshCache();
+    }, 1500); // 1.5秒延迟
+  },
+  watch: {
+    // 监听路由参数变化，支持从URL恢复仓库状态
+    '$route.query.repoId': {
+      immediate: true,
+      async handler(newRepoId) {
+        if (newRepoId && newRepoId !== this.currentRepoId && this.availableRepos.length > 0) {
+          console.log('[DashboardPage] Route repoId changed:', newRepoId);
+          await this.handleRepoChange(newRepoId);
+        }
+      }
+    }
   },
   methods: {
     // 初始化仪表板
@@ -392,10 +429,17 @@ export default {
     
     // 刷新命令处理
     async handleRefreshCommand(command) {
+      console.log('[🔍 DEBUG] DashboardPage handleRefreshCommand called:', { command });
+      
       if (command === 'current') {
+        console.log('[🔍 DEBUG] DashboardPage: handling current refresh');
         await this.handleForceRefresh();
       } else if (command === 'all') {
+        console.log('[🔍 DEBUG] DashboardPage: handling batch refresh');
         await this.handleBatchRefresh();
+      } else if (command === 'cache') {
+        console.log('[🔍 DEBUG] DashboardPage: handling cache refresh');
+        await this.handleCacheRefresh();
       }
     },
     
@@ -560,6 +604,70 @@ export default {
         this.$message.error('保存失败: ' + error.message);
       } finally {
         this.saving = false;
+      }
+    },
+    
+    // 新增：自动缓存刷新处理
+    async autoRefreshCache() {
+      // 避免重复自动刷新
+      if (this.hasAutoRefreshed) {
+        console.log('[DashboardPage] Auto cache refresh already executed, skipping');
+        return;
+      }
+      
+      console.log('[🔍 DEBUG] DashboardPage autoRefreshCache started');
+      
+      try {
+        // 调用loadSnapshots并自动应用
+        const snapshots = await this.$store.dispatch('diff/loadSnapshots', { 
+          autoApply: true, 
+          preferredRepoId: this.currentRepoId 
+        });
+        
+        console.log('[🔍 DEBUG] DashboardPage auto cache refresh result:', { 
+          snapshotCount: snapshots?.length || 0,
+          currentRepoId: this.currentRepoId,
+          taskId: this.taskId,
+          hasDiffMatrix: this.hasData
+        });
+        
+        // 标记已自动刷新
+        this.hasAutoRefreshed = true;
+        
+        if (snapshots && snapshots.length > 0) {
+          this.$message.success('已自动刷新缓存数据');
+        } else {
+          this.$message.info('暂无缓存数据');
+        }
+      } catch (error) {
+        console.error('[🔍 DEBUG] DashboardPage auto cache refresh failed:', error);
+        // 自动刷新失败不显示错误信息，避免干扰用户体验
+        console.warn('自动缓存刷新失败:', error.message);
+      }
+    },
+    
+    // 新增：缓存刷新处理
+    async handleCacheRefresh() {
+      console.log('[🔍 DEBUG] DashboardPage handleCacheRefresh called');
+      
+      try {
+        // 调用loadSnapshots并自动应用
+        const snapshots = await this.$store.dispatch('diff/loadSnapshots', { 
+          autoApply: true, 
+          preferredRepoId: this.currentRepoId 
+        });
+        
+        console.log('[🔍 DEBUG] DashboardPage cache refresh result:', { 
+          snapshotCount: snapshots?.length || 0,
+          currentRepoId: this.currentRepoId,
+          taskId: this.taskId,
+          hasDiffMatrix: this.hasData
+        });
+        
+        this.$message.success('缓存刷新完成');
+      } catch (error) {
+        console.error('[🔍 DEBUG] DashboardPage cache refresh failed:', error);
+        this.$message.error(`缓存刷新失败: ${error.message}`);
       }
     },
     

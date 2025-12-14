@@ -117,6 +117,13 @@
         <span v-if="!exportingReport">导出 {{ exportFormat.toUpperCase() }}</span>
         <span v-else>{{ exportProgressText }}</span>
       </el-button>
+      <el-button
+        v-if="currentAsyncTask && currentAsyncTask.isDownloadable"
+        type="success"
+        @click="downloadCurrentAsyncTask"
+      >
+        下载文件
+      </el-button>
     </span>
   </el-dialog>
 </template>
@@ -173,6 +180,7 @@ export default {
       'exportingReport',
       'exportProgress',
       'diffMatrix',
+      'currentAsyncTask',
     ]),
     ...mapGetters('diff', {
       availableFileExtensions: 'availableFileExtensions',
@@ -280,7 +288,7 @@ export default {
     },
   },
   methods: {
-    ...mapActions('diff', ['fetchRecentTasks', 'exportMultiReport']),
+    ...mapActions('diff', ['fetchRecentTasks', 'exportMultiReport', 'smartExport', 'downloadAsyncExportFile']),
     handleClose() {
       this.internalVisible = false;
       this.$emit('update:visible', false);
@@ -396,11 +404,34 @@ export default {
       const filterSummary = filterInfo.length > 0 ? ` (应用筛选: ${filterInfo.join(', ')})` : ' (导出全部数据)';
       
       try {
-        await this.exportMultiReport({ repos, filters, format: this.exportFormat });
-        this.$message.success(`报表生成成功，已开始下载${filterSummary}`);
-        this.handleClose();
+        // 使用智能导出：自动选择同步或异步导出
+        const result = await this.smartExport({ repos, filters, format: this.exportFormat });
+        
+        if (result && result.taskId) {
+          // 异步导出
+          this.$message.info(`异步导出任务已创建，任务ID: ${result.taskId}${filterSummary}`);
+        } else {
+          // 同步导出成功
+          this.$message.success(`报表生成成功，已开始下载${filterSummary}`);
+          this.handleClose();
+        }
       } catch (error) {
         this.$message.error(error.message || '导出失败');
+      }
+    },
+
+    // 下载当前异步任务的文件
+    async downloadCurrentAsyncTask() {
+      if (!this.currentAsyncTask || !this.currentAsyncTask.taskId) {
+        this.$message.warning('没有可下载的任务');
+        return;
+      }
+      
+      try {
+        await this.downloadAsyncExportFile(this.currentAsyncTask.taskId);
+        this.$message.success('文件下载成功');
+      } catch (error) {
+        this.$message.error('下载失败: ' + (error.message || error));
       }
     },
     formatPercent(value) {

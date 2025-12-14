@@ -1,68 +1,40 @@
 package com.example.migratediff.infrastructure.persistence.filesystem;
 
-import com.example.migratediff.domain.repo.RepoBranch;
 import com.example.migratediff.domain.repo.RepoConfig;
-import com.example.migratediff.domain.repo.RepoPath;
 import com.example.migratediff.infrastructure.persistence.RepoRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Repository;
-import org.springframework.util.StringUtils;
 
 import java.nio.file.Path;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-/**
- * 基于文件系统的 RepoConfig 仓储实现。
- */
-@Repository
-@ConditionalOnProperty(prefix = "file-storage", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class FileSystemRepoRepository implements RepoRepository {
 
     private static final Logger log = LoggerFactory.getLogger(FileSystemRepoRepository.class);
-    private static final String REPO_DIRECTORY = "repo";
-    private static final String INDEX_FILE = "index.json";
+    private static final String REPO_DIRECTORY = "repos";
 
     private final FileStorageSupport storageSupport;
     private final FileRepoKeyResolver keyResolver;
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
-    private final Path indexFilePath;
 
     public FileSystemRepoRepository(FileStorageSupport storageSupport, FileRepoKeyResolver keyResolver) {
         this.storageSupport = storageSupport;
         this.keyResolver = keyResolver;
-        Path repoDirectory = storageSupport.resolve(REPO_DIRECTORY);
-        storageSupport.ensureDirectory(repoDirectory);
-        this.indexFilePath = repoDirectory.resolve(INDEX_FILE);
-        ensureIndexFile();
+        storageSupport.ensureDirectory(storageSupport.resolve(REPO_DIRECTORY));
     }
 
     @Override
     public RepoConfig save(RepoConfig repoConfig) {
         lock.writeLock().lock();
         try {
-            String id = keyResolver.resolveKey(repoConfig);
-            repoConfig.setId(id);
-            Path filePath = storageSupport.resolve(REPO_DIRECTORY, id + ".json");
-            storageSupport.writeJson(filePath, repoConfig);
-
-            RepoIndex index = loadIndex();
-            RepoIndexEntry entry = new RepoIndexEntry();
-            entry.setId(id);
-            entry.setAbsolutePath(resolveAbsolutePath(repoConfig.getRepoPath()));
-            entry.setBranchFrom(resolveBranchName(repoConfig.getBranchFrom()));
-            entry.setBranchTo(resolveBranchName(repoConfig.getBranchTo()));
-            entry.setUpdatedAt(Instant.now());
-            index.upsert(id, entry);
-            storageSupport.writeJson(indexFilePath, index);
-
-            log.debug("已持久化 RepoConfig: {}", id);
+            String key = keyResolver.resolveKey(repoConfig);
+            Path target = storageSupport.resolve(REPO_DIRECTORY, SafeFileNameEncoder.encode(key) + ".json");
+            storageSupport.writeJson(target, repoConfig);
+            log.debug("已持久化仓库配置: {}", target);
             return repoConfig;
         } finally {
             lock.writeLock().unlock();
@@ -70,34 +42,32 @@ public class FileSystemRepoRepository implements RepoRepository {
     }
 
     @Override
-    public Optional<RepoConfig> findById(String id) {
+    public List<RepoConfig> findAll() {
         lock.readLock().lock();
         try {
-            Path filePath = storageSupport.resolve(REPO_DIRECTORY, id + ".json");
-            Optional<RepoConfig> loaded = storageSupport.readJson(filePath, RepoConfig.class);
-            loaded.ifPresent(config -> config.setId(id));
-            return loaded;
+            Path directory = storageSupport.resolve(REPO_DIRECTORY);
+            if (!java.nio.file.Files.exists(directory)) {
+                return new ArrayList<>();
+            }
+            try (java.util.stream.Stream<java.nio.file.Path> stream = java.nio.file.Files.list(directory)) {
+                List<RepoConfig> configs = new ArrayList<>();
+                stream.filter(java.nio.file.Files::isRegularFile)
+                        .forEach(path -> storageSupport.readJson(path, RepoConfig.class).ifPresent(configs::add));
+                return configs;
+            } catch (java.io.IOException ex) {
+                throw new FilePersistenceException("读取仓库配置目录失败: " + directory, ex);
+            }
         } finally {
             lock.readLock().unlock();
         }
     }
 
     @Override
-    public List<RepoConfig> findAll() {
+    public Optional<RepoConfig> findById(String id) {
         lock.readLock().lock();
         try {
-            RepoIndex index = loadIndex();
-            index.sortByUpdatedAtDesc();
-            List<RepoConfig> result = new ArrayList<>();
-            for (RepoIndexEntry entry : index.getEntries()) {
-                Path filePath = storageSupport.resolve(REPO_DIRECTORY, entry.getId() + ".json");
-                storageSupport.readJson(filePath, RepoConfig.class)
-                        .ifPresent(config -> {
-                            config.setId(entry.getId());
-                            result.add(config);
-                        });
-            }
-            return result;
+            Path filePath = storageSupport.resolve(REPO_DIRECTORY, SafeFileNameEncoder.encode(id) + ".json");
+            return storageSupport.readJson(filePath, RepoConfig.class);
         } finally {
             lock.readLock().unlock();
         }
@@ -105,38 +75,12 @@ public class FileSystemRepoRepository implements RepoRepository {
 
     @Override
     public void deleteById(String id) {
-        if (!StringUtils.hasText(id)) {
-            return;
-        }
         lock.writeLock().lock();
         try {
-            Path filePath = storageSupport.resolve(REPO_DIRECTORY, id + ".json");
+            Path filePath = storageSupport.resolve(REPO_DIRECTORY, SafeFileNameEncoder.encode(id) + ".json");
             storageSupport.deleteIfExists(filePath);
-            RepoIndex index = loadIndex();
-            index.remove(id);
-            storageSupport.writeJson(indexFilePath, index);
-            log.debug("已删除 RepoConfig: {}", id);
         } finally {
             lock.writeLock().unlock();
         }
-    }
-
-    private RepoIndex loadIndex() {
-        return storageSupport.readJson(indexFilePath, RepoIndex.class)
-                .orElseGet(RepoIndex::new);
-    }
-
-    private void ensureIndexFile() {
-        if (!storageSupport.readJson(indexFilePath, RepoIndex.class).isPresent()) {
-            storageSupport.writeJson(indexFilePath, new RepoIndex());
-        }
-    }
-
-    private String resolveBranchName(RepoBranch branch) {
-        return branch != null ? branch.getName() : null;
-    }
-
-    private String resolveAbsolutePath(RepoPath repoPath) {
-        return repoPath != null ? repoPath.getAbsolutePath() : null;
     }
 }

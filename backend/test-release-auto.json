@@ -1,0 +1,20 @@
+{
+  "source": {
+    "code": "test-release-auto",
+    "path": "D:\\Coding\\code-compare-tools\\examples\\JeecgBoot",
+    "scanStrategy": "RELEASE_AUTO",
+    "timeFrom": "2025-11-01T00:00:00Z",
+    "timeTo": "2025-12-02T23:59:59Z",
+    "fetchIfMissing": true,
+    "remoteName": "origin"
+  },
+  "target": {
+    "code": "test-release-auto-target", 
+    "path": "D:\\Coding\\code-compare-tools\\examples\\JeecgBoot",
+    "scanStrategy": "RELEASE_AUTO",
+    "timeFrom": "2025-11-01T00:00:00Z",
+    "timeTo": "2025-11-10T23:59:59Z",
+    "fetchIfMissing": true,
+    "remoteName": "origin"
+  }
+}

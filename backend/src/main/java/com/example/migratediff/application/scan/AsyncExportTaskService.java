@@ -1,10 +1,12 @@
 package com.example.migratediff.application.scan;
 
 import com.example.migratediff.api.dto.MultiRepoExportRequestDTO;
+import com.example.migratediff.api.dto.RepoSelectionDTO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -15,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 /**
  * 异步导出任务服务
@@ -284,8 +287,84 @@ public class AsyncExportTaskService {
      * 转换DTO到领域对象
      */
     private MultiRepoExportRequest convertToDomainRequest(MultiRepoExportRequestDTO dto) {
-        // 这里需要实现DTO到领域对象的转换
-        // 为了简化，暂时返回null，实际使用时需要完整实现
-        throw new UnsupportedOperationException("需要实现DTO到领域对象的转换");
+        if (dto == null) {
+            throw new IllegalArgumentException("导出请求不能为空");
+        }
+
+        // 转换筛选条件
+        DiffMatrixFilterCriteria criteria = DiffMatrixFilterCriteria.builder()
+                .statuses(normalizeStatuses(dto.getStatuses()))
+                .coverageMin(dto.getCoverageMin() != null ? dto.getCoverageMin() : 0.0)
+                .coverageMax(dto.getCoverageMax() != null ? dto.getCoverageMax() : 1.0)
+                .includeEmptyCoverage(dto.isIncludeEmptyCoverage())
+                .fileExtensions(normalizeFileExtensions(dto.getFileExtensions()))
+                .excludeTestFiles(dto.isExcludeTestFiles())
+                .excludePatterns(normalizeExcludePatterns(dto.getExcludePatterns()))
+                .includeCommitInfo(dto.isIncludeCommitInfo())
+                .authorTypeFilter(dto.getAuthorTypeFilter())
+                .build();
+
+        // 转换仓库选择
+        List<MultiRepoExportRequest.RepoSelection> selections = new ArrayList<>();
+        if (dto.getRepos() != null) {
+            for (RepoSelectionDTO repoDto : dto.getRepos()) {
+                if (repoDto != null) {
+                    MultiRepoExportRequest.RepoSelection selection = MultiRepoExportRequest.RepoSelection.builder()
+                            .taskId(StringUtils.hasText(repoDto.getTaskId()) ? repoDto.getTaskId().trim() : null)
+                            .presetName(StringUtils.hasText(repoDto.getPresetName()) ? repoDto.getPresetName().trim() : null)
+                            .alias(StringUtils.hasText(repoDto.getAlias()) ? repoDto.getAlias().trim() : null)
+                            .build();
+                    selections.add(selection);
+                }
+            }
+        }
+
+        String format = StringUtils.hasText(dto.getFormat()) ? dto.getFormat().trim().toLowerCase() : "csv";
+
+        return MultiRepoExportRequest.builder()
+                .repos(selections)
+                .filterCriteria(criteria)
+                .format(format)
+                .build();
+    }
+
+    private List<String> normalizeStatuses(List<String> statuses) {
+        if (statuses == null) {
+            return new ArrayList<>();
+        }
+        return statuses.stream()
+                .filter(StringUtils::hasText)
+                .map(status -> status.trim().toLowerCase())
+                .collect(Collectors.toList());
+    }
+
+    private List<String> normalizeFileExtensions(List<String> fileExtensions) {
+        if (fileExtensions == null) {
+            return new ArrayList<>();
+        }
+        return fileExtensions.stream()
+                .filter(StringUtils::hasText)
+                .map(ext -> ext.trim().toLowerCase())
+                .collect(Collectors.toList());
+    }
+
+    private List<String> normalizeExcludePatterns(List<String> excludePatterns) {
+        if (excludePatterns == null) {
+            return new ArrayList<>();
+        }
+        return excludePatterns.stream()
+                .filter(StringUtils::hasText)
+                .map(pattern -> pattern.trim())
+                .collect(Collectors.toList());
+    }
+
+    private List<String> normalizeAuthorFilters(List<String> authorFilters) {
+        if (authorFilters == null) {
+            return new ArrayList<>();
+        }
+        return authorFilters.stream()
+                .filter(StringUtils::hasText)
+                .map(author -> author.trim())
+                .collect(Collectors.toList());
     }
 }

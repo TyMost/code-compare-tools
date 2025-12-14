@@ -325,13 +325,34 @@ export default {
     'currentFile.filePath': {
       immediate: true,
       handler(newPath, oldPath) {
+        console.log('[🔍 DEBUG] FileDiffPage filePath changed:', { newPath, oldPath });
         if (newPath && newPath !== oldPath) {
+          console.log('[🔍 DEBUG] FileDiffPage resetting states for new file');
           this.commitHistoryExpanded = false;
           this.showBlockMapping = false;
           this.loadCommitHistory();
           // 预加载块映射缓存
           this.preloadBlockMappingCache();
         }
+      },
+    },
+
+    // 监听taskId变化
+    'taskId': {
+      immediate: true,
+      handler(newTaskId, oldTaskId) {
+        console.log('[🔍 DEBUG] FileDiffPage taskId changed:', { newTaskId, oldTaskId });
+      },
+    },
+
+    // 监听diffMatrix变化
+    'diffMatrix': {
+      immediate: true,
+      handler(newMatrix, oldMatrix) {
+        console.log('[🔍 DEBUG] FileDiffPage diffMatrix changed:', { 
+          newLength: newMatrix?.length || 0, 
+          oldLength: oldMatrix?.length || 0 
+        });
       },
     },
   },
@@ -355,12 +376,39 @@ export default {
     goToDashboard() {
       try {
         console.log('[FileDiffPage] 返回总览页面');
-        this.$router.push({ name: 'Dashboard' });
+        
+        // 构建查询参数，保持当前仓库状态
+        const query = {};
+        if (this.storeTaskId || this.taskId) {
+          query.taskId = this.storeTaskId || this.taskId;
+        }
+        
+        // 获取当前仓库ID（从缓存或store中推断）
+        const currentRepoId = this.getCurrentRepoId();
+        if (currentRepoId) {
+          query.repoId = currentRepoId;
+        }
+        
+        this.$router.push({ 
+          name: 'Dashboard',
+          query: query 
+        });
       } catch (error) {
         console.error('[FileDiffPage] 返回总览失败:', error);
         // 备用方案：使用路径导航
         this.$router.push('/dashboard');
       }
+    },
+    
+    // 获取当前仓库ID
+    getCurrentRepoId() {
+      // 尝试从不同的状态源获取仓库ID
+      const sources = [
+        this.$store.state.diff.currentRepoId,
+        this.$store.state.diff.activeRepoId,
+      ];
+      
+      return sources.find(id => id && typeof id === 'string') || '';
     },
     
     async retryLoad() {
@@ -454,6 +502,14 @@ export default {
     },
     
     handleModeChange(mode) {
+      console.log('[FileDiffPage] Mode change requested:', {
+        from: this.diffMode,
+        to: mode,
+        currentFile: this.currentFile.filePath,
+        hasOracleDiff: !!this.currentFile.oracleDiff,
+        hasGaussDiff: !!this.currentFile.gaussDiff,
+        hasMigrationDiff: !!this.currentFile.migrationDiff
+      });
       this.setDiffMode(mode);
     },
     handleOptionsChange(options) {

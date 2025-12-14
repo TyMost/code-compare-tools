@@ -41,12 +41,41 @@ public class GitDiffAdapter {
         DeltaType deltaType = config != null && config.getDeltaType() != null ? config.getDeltaType() : DeltaType.DELTA_O;
         DiffType diffType = mapFileDiffType(entry);
         String relativePath = resolveRelativePath(entry);
+        
+        // 获取 Git 信息用于 FullFileContextStrategy
+        String commitHash = getCurrentCommitHash(repository);
+        String repoPath = config != null && config.getRepoPath() != null 
+                ? config.getRepoPath().getAbsolutePath() 
+                : null;
+        
         return DiffFile.builder()
                 .relativePath(relativePath)
                 .deltaType(deltaType)
                 .diffType(diffType)
                 .blocks(blocks)
+                .commitHash(commitHash)
+                .repoPath(repoPath)
                 .build();
+    }
+    
+    /**
+     * 获取当前提交哈希
+     */
+    private String getCurrentCommitHash(Repository repository) {
+        try {
+            // 尝试获取 HEAD 引用
+            if (repository.resolve("HEAD") != null) {
+                return repository.resolve("HEAD").getName();
+            }
+            // 如果没有 HEAD，尝试获取第一个分支
+            if (!repository.getAllRefs().isEmpty()) {
+                return repository.getAllRefs().values().iterator().next().getObjectId().getName();
+            }
+            return null;
+        } catch (Exception e) {
+            LOGGER.warn("无法获取提交哈希: {}", e.getMessage());
+            return null;
+        }
     }
 
     private String resolveRelativePath(DiffEntry entry) {
@@ -434,7 +463,3 @@ public class GitDiffAdapter {
         }
     }
 }
-
-
-
-

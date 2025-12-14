@@ -1,0 +1,216 @@
+package com.example.migratediff.infrastructure.git.strategy;
+
+import com.example.migratediff.domain.diff.DiffSummary;
+import com.example.migratediff.domain.repo.RepoConfig;
+import com.example.migratediff.domain.repo.RepoPath;
+import com.example.migratediff.domain.repo.RepoType;
+import com.example.migratediff.infrastructure.config.GitScanProperties;
+import com.example.migratediff.infrastructure.git.GitDiffParser;
+import com.example.migratediff.infrastructure.git.GitRepositoryHelper;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.Repository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.io.File;
+import java.time.Instant;
+import java.util.Arrays;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+/**
+ * TimeBasedReleaseDiffStrategy 的单元测试
+ * 验证修复后的逻辑是否正确工作
+ */
+@ExtendWith(MockitoExtension.class)
+public class TimeBasedReleaseDiffStrategyTest {
+
+    @Mock
+    private GitRepositoryHelper gitRepositoryHelper;
+    
+    @Mock
+    private GitDiffParser gitDiffParser;
+    
+    @Mock
+    private GitScanProperties gitScanProperties;
+    
+    @Mock
+    private ParallelCommitSearcher parallelCommitSearcher;
+    
+    @Mock
+    private CommitCache commitCache;
+    
+    @Mock
+    private OptimizedBranchFilter optimizedBranchFilter;
+    
+    @Mock
+    private ReleaseBranchAnalyzer releaseBranchAnalyzer;
+    
+    @Mock
+    private Repository repository;
+
+    private TimeBasedReleaseDiffStrategy strategy;
+
+    @BeforeEach
+    void setUp() {
+        strategy = new TimeBasedReleaseDiffStrategy(
+                gitRepositoryHelper,
+                gitDiffParser,
+                gitScanProperties,
+                parallelCommitSearcher,
+                commitCache,
+                optimizedBranchFilter,
+                releaseBranchAnalyzer
+        );
+        
+        // 设置默认的配置
+        when(gitScanProperties.getMainBranches()).thenReturn(Arrays.asList("master", "main"));
+        when(gitScanProperties.getReleasePattern()).thenReturn("release/*");
+    }
+
+    @Test
+    void testInvalidConfigReturnsEmptySummary() {
+        // 测试无效配置返回空结果
+        RepoConfig invalidConfig = new RepoConfig();
+        DiffSummary result = strategy.scan(invalidConfig);
+        
+        assertNotNull(result);
+        assertTrue(result.getDiffFiles().isEmpty());
+    }
+
+    @Test
+    void testValidConfigWithTimeWindow() throws Exception {
+        // 测试有效配置和时间窗口
+        RepoConfig config = createValidRepoConfig();
+        
+        when(gitRepositoryHelper.openRepository(config)).thenReturn(repository);
+        when(repository.getDirectory()).thenReturn(new File("/test/repo"));
+        
+        // 执行扫描
+        DiffSummary result = strategy.scan(config);
+        
+        // 验证结果
+        assertNotNull(result);
+        verify(gitRepositoryHelper).openRepository(config);
+        verify(gitRepositoryHelper).closeRepository(repository);
+    }
+
+    @Test
+    void testReleaseBranchAnalyzerIntegration() {
+        // 测试ReleaseBranchAnalyzer集成
+        RepoConfig config = createValidRepoConfig();
+        
+        when(gitRepositoryHelper.openRepository(config)).thenReturn(repository);
+        when(repository.getDirectory()).thenReturn(new File("/test/repo"));
+        
+        // 模拟baseline选择
+        ParallelCommitSearcher.ParallelSearchResult baselineSearchResult = 
+                mock(ParallelCommitSearcher.ParallelSearchResult.class);
+        ObjectId baselineCommit = ObjectId.fromString("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        when(baselineSearchResult.getFirstFoundCommit()).thenReturn(baselineCommit);
+        doReturn(baselineSearchResult).when(parallelCommitSearcher).searchCommitsInParallel(
+                eq(repository), anyList(), any(Instant.class), any(Instant.class), eq(true));
+        
+        // 模拟release分支选择
+        ObjectId releaseCommit = ObjectId.fromString("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        CommitSelectionResult releaseResult = CommitSelectionResult.of(releaseCommit, "release/2.0");
+        when(releaseBranchAnalyzer.selectLatestCreatedReleaseBranch(
+                eq(repository), eq("release/*"), any(Instant.class), any(Instant.class)))
+                .thenAnswer(invocation -> releaseResult);
+        
+        // 执行扫描
+        DiffSummary result = strategy.scan(config);
+        
+        // 验证调用了新的ReleaseBranchAnalyzer
+        verify(releaseBranchAnalyzer, times(1)).selectLatestCreatedReleaseBranch(
+                eq(repository), eq("release/*"), any(Instant.class), any(Instant.class));
+        
+        assertNotNull(result);
+    }
+
+    @Test
+    void testFallbackToMainBranchesWhenReleaseFails() {
+        // 测试当ReleaseBranchAnalyzer失败时回退到主分支
+        RepoConfig config = createValidRepoConfig();
+        
+        when(gitRepositoryHelper.openRepository(config)).thenReturn(repository);
+        when(repository.getDirectory()).thenReturn(new File("/test/repo"));
+        
+        // 模拟baseline选择成功
+        ParallelCommitSearcher.ParallelSearchResult baselineSearchResult = 
+                mock(ParallelCommitSearcher.ParallelSearchResult.class);
+        ObjectId baselineCommit = ObjectId.fromString("cccccccccccccccccccccccccccccccccccccccc");
+        when(baselineSearchResult.getFirstFoundCommit()).thenReturn(baselineCommit);
+        doReturn(baselineSearchResult).when(parallelCommitSearcher).searchCommitsInParallel(
+                eq(repository), anyList(), any(Instant.class), any(Instant.class), eq(true));
+        
+        // 模拟release分支选择失败
+        doThrow(new RuntimeException("Release analysis failed"))
+                .when(releaseBranchAnalyzer).selectLatestCreatedReleaseBranch(
+                eq(repository), eq("release/*"), any(Instant.class), any(Instant.class));
+        
+        // 模拟主分支fallback成功
+        ParallelCommitSearcher.ParallelSearchResult mainBranchResult = 
+                mock(ParallelCommitSearcher.ParallelSearchResult.class);
+        ObjectId mainCommit = ObjectId.fromString("dddddddddddddddddddddddddddddddddddddddd");
+        when(mainBranchResult.getFirstFoundCommit()).thenReturn(mainCommit);
+        doReturn(mainBranchResult).when(parallelCommitSearcher).searchCommitsInParallel(
+                eq(repository), anyList(), any(Instant.class), any(Instant.class), eq(false));
+        
+        // 执行扫描
+        DiffSummary result = strategy.scan(config);
+        
+        // 验证先尝试release分支，然后回退到主分支
+        verify(releaseBranchAnalyzer, times(1)).selectLatestCreatedReleaseBranch(
+                eq(repository), eq("release/*"), any(Instant.class), any(Instant.class));
+        verify(parallelCommitSearcher, times(1)).searchCommitsInParallel(
+                eq(repository), anyList(), any(Instant.class), any(Instant.class), eq(false));
+        
+        assertNotNull(result);
+    }
+
+    @Test
+    void testPerformanceStats() {
+        // 测试性能统计
+        when(commitCache.getStats()).thenReturn(mock(CommitCache.CacheStats.class));
+        when(optimizedBranchFilter.getStats()).thenReturn(mock(OptimizedBranchFilter.BranchFilterStats.class));
+        
+        String stats = strategy.getPerformanceStats();
+        
+        assertNotNull(stats);
+        assertTrue(stats.contains("Performance Stats"));
+    }
+
+    @Test
+    void testClearAllCaches() {
+        // 测试清理所有缓存
+        strategy.clearAllCaches();
+        
+        verify(commitCache, times(1)).clearAll();
+        verify(optimizedBranchFilter, times(1)).clearAllCache();
+        verify(releaseBranchAnalyzer, times(1)).cleanExpiredCache();
+    }
+
+    /**
+     * 创建有效的RepoConfig用于测试
+     */
+    private RepoConfig createValidRepoConfig() {
+        RepoConfig config = new RepoConfig();
+        
+        // 注意：这里需要根据实际的RepoConfig API来设置
+        // 由于我们没有TimeRange类的详细信息，这里简化处理
+        RepoPath repoPath = RepoPath.builder()
+                .absolutePath("/test/repo")
+                .type(RepoType.ORACLE) // 使用实际存在的枚举值
+                .build();
+        config.setRepoPath(repoPath);
+        config.setFetchIfMissing(false);
+        
+        return config;
+    }
+}

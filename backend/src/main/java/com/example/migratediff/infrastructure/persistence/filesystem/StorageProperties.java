@@ -6,9 +6,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 /**
- * File storage configuration bound from file-storage.* properties.
+ * File storage configuration bound from file.storage.* properties.
  */
-@ConfigurationProperties(prefix = "file-storage")
+@ConfigurationProperties(prefix = "file.storage")
 public class StorageProperties {
 
     /**

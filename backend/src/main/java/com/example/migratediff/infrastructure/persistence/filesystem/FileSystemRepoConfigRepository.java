@@ -20,8 +20,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 /**
  * 基于文件系统的仓库配置仓储实现
  */
+@ConditionalOnProperty(prefix = "file.storage", name = "enabled", havingValue = "true", matchIfMissing = true)
 @Repository
-@ConditionalOnProperty(prefix = "file-storage", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class FileSystemRepoConfigRepository implements RepoConfigRepository {
 
     private static final Logger log = LoggerFactory.getLogger(FileSystemRepoConfigRepository.class);

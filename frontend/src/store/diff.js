@@ -5,6 +5,12 @@ import {
   exportMultiReport as exportMultiReportRequest,
   fetchScanCache as fetchScanCacheRequest,
   clearScanCache as clearScanCacheRequest,
+  createAsyncExportTask,
+  getAsyncExportTaskStatus,
+  downloadAsyncExportFile,
+  cancelAsyncExportTask,
+  getAllAsyncExportTasks,
+  cleanupExpiredAsyncExportTasks,
 } from '../api/diff';
 import commitApi from '../api/commit';
 import {
@@ -390,6 +396,12 @@ export default {
       percentage: 0,
     },
     
+    // 异步导出相关状态
+    asyncExportTasks: [],
+    loadingAsyncExportTasks: false,
+    currentAsyncTask: null,
+    pollingInterval: null,
+    
     // 兼容性字段（保留现有组件使用）
     cachedSnapshots: [],
     loadingSnapshots: false,
@@ -591,6 +603,38 @@ export default {
         percentage: 0,
       };
     },
+    // 异步导出相关 mutations
+    setAsyncExportTasks(state, tasks) {
+      state.asyncExportTasks = Array.isArray(tasks) ? [...tasks] : [];
+    },
+    setLoadingAsyncExportTasks(state, flag) {
+      state.loadingAsyncExportTasks = flag;
+    },
+    setCurrentAsyncTask(state, task) {
+      state.currentAsyncTask = task;
+    },
+    updateAsyncTaskStatus(state, { taskId, status }) {
+      const taskIndex = state.asyncExportTasks.findIndex(task => task.taskId === taskId);
+      if (taskIndex !== -1) {
+        state.asyncExportTasks.splice(taskIndex, 1, status);
+      }
+      // 如果是当前任务，也要更新
+      if (state.currentAsyncTask && state.currentAsyncTask.taskId === taskId) {
+        state.currentAsyncTask = status;
+      }
+    },
+    removeAsyncTask(state, taskId) {
+      state.asyncExportTasks = state.asyncExportTasks.filter(task => task.taskId !== taskId);
+      if (state.currentAsyncTask && state.currentAsyncTask.taskId === taskId) {
+        state.currentAsyncTask = null;
+      }
+    },
+    setPollingInterval(state, interval) {
+      if (state.pollingInterval) {
+        clearInterval(state.pollingInterval);
+      }
+      state.pollingInterval = interval;
+    },
   },
   getters: {
     filteredDiffMatrix(state) {
@@ -755,10 +799,21 @@ export default {
       };
     },
     async loadSnapshots({ commit, dispatch }, { autoApply = false, preferredRepoId } = {}) {
+      console.log('[🔍 DEBUG] loadSnapshots called:', { autoApply, preferredRepoId });
       commit('setLoadingSnapshots', true);
       try {
         const snapshots = await fetchScanCacheRequest();
+        console.log('[🔍 DEBUG] loadSnapshots API response:', { 
+          snapshotCount: snapshots?.length || 0,
+          snapshots: snapshots?.map(s => ({ 
+            taskId: s.taskId, 
+            repoId: s.repoId, 
+            hasResponse: !!s.response,
+            summaryFiles: s.response?.summary?.totalFiles
+          }))
+        });
         commit('setCachedSnapshots', snapshots || []);
+        
         if (
           autoApply
           && Array.isArray(snapshots)
@@ -766,15 +821,50 @@ export default {
         ) {
           const target = snapshots.find((item) => resolveSnapshotKey(item) === preferredRepoId)
             || snapshots[0];
+          console.log('[🔍 DEBUG] loadSnapshots autoApplying target:', { 
+            target: resolveSnapshotKey(target),
+            preferredRepoId,
+            isFirstSnapshot: !preferredRepoId
+          });
+          
           await dispatch('applySnapshot', target);
+          
+          // 新增：应用快照后，调用applyRepoData确保UI更新
+          const key = resolveSnapshotKey(target);
+          console.log('[🔍 DEBUG] loadSnapshots applying repo data:', { key, shouldApply: !!key });
+          if (key) {
+            commit('setCurrentRepoId', key);
+            commit('applyRepoData', key);
+            console.log('[🔍 DEBUG] loadSnapshots repo data applied, current state:', {
+              currentRepoId: key,
+              taskId: target.response?.taskId,
+              hasDiffMatrix: target.response?.diffMatrix?.length > 0
+            });
+          }
+        } else {
+          console.log('[🔍 DEBUG] loadSnapshots skipped autoApply:', { 
+            autoApply, 
+            hasSnapshots: Array.isArray(snapshots), 
+            snapshotCount: snapshots?.length 
+          });
         }
         return snapshots;
       } finally {
         commit('setLoadingSnapshots', false);
+        console.log('[🔍 DEBUG] loadSnapshots completed');
       }
     },
-    async applySnapshot({ commit }, snapshot) {
+    async applySnapshot({ commit, dispatch }, snapshot) {
+      console.log('[🔍 DEBUG] applySnapshot called:', { 
+        hasSnapshot: !!snapshot,
+        hasResponse: !!snapshot?.response,
+        taskId: snapshot?.taskId,
+        repoId: snapshot?.repoId,
+        resolvedKey: resolveSnapshotKey(snapshot)
+      });
+      
       if (!snapshot || !snapshot.response) {
+        console.log('[🔍 DEBUG] applySnapshot: clearing state due to invalid snapshot');
         commit('setActiveRepoId', '');
         commit('setTaskId', '');
         commit('setSummary', defaultSummary());
@@ -784,6 +874,8 @@ export default {
         return null;
       }
       const key = resolveSnapshotKey(snapshot);
+      console.log('[🔍 DEBUG] applySnapshot: processing snapshot with key:', key);
+      
       commit('setActiveRepoId', key);
       const response = snapshot.response;
       commit('setTaskId', response?.taskId || snapshot.taskId || '');
@@ -794,6 +886,19 @@ export default {
       commit('setSummary', response?.summary || {});
       commit('setDiffMatrix', response?.diffMatrix || []);
       commit('setCurrentFile', {});
+      
+      console.log('[🔍 DEBUG] applySnapshot: state updated:', {
+        taskId: response?.taskId || snapshot.taskId,
+        hasSummary: !!response?.summary,
+        summaryFiles: response?.summary?.totalFiles,
+        hasDiffMatrix: !!response?.diffMatrix,
+        diffMatrixLength: response?.diffMatrix?.length
+      });
+      
+      // 新增：同时更新repoDataCache，确保缓存数据同步
+      await dispatch('applySnapshotToCache', { repoId: key, snapshot });
+      console.log('[🔍 DEBUG] applySnapshot: cache updated, returning snapshot');
+      
       return snapshot;
     },
     async clearSnapshots({ commit }) {
@@ -861,10 +966,28 @@ export default {
       }
       commit('setLoadingDetail', true);
       try {
+        console.log('[DiffStore] fetchDetail called:', {
+          taskId: effectiveTaskId,
+          filePath: targetFilePath
+        });
+        
         const detail = await fetchDetailRequest({
           taskId: effectiveTaskId,
           filePath: targetFilePath,
         });
+        
+        console.log('[DiffStore] fetchDetail response:', {
+          filePath: detail.filePath,
+          hasOracleDiff: !!detail.oracleDiff,
+          hasGaussDiff: !!detail.gaussDiff,
+          hasMigrationDiff: !!detail.migrationDiff,
+          oracleBeforeLength: detail.oracleDiff?.before?.length || 0,
+          oracleAfterLength: detail.oracleDiff?.after?.length || 0,
+          gaussBeforeLength: detail.gaussDiff?.before?.length || 0,
+          gaussAfterLength: detail.gaussDiff?.after?.length || 0,
+          migrationDiffLength: detail.migrationDiff?.length || 0
+        });
+        
         commit('setCurrentFile', detail);
         return detail;
       } finally {
@@ -1065,11 +1188,11 @@ export default {
     /**
      * 初始化仓库管理：加载可用仓库列表和缓存数据
      */
-    async initializeRepoManagement({ commit, dispatch }) {
+    async initializeRepoManagement({ commit, dispatch, state }) {
       try {
         // 1. 加载默认仓库配置
         const profiles = await dispatch('syncDefaultProfiles');
-        const repos = profiles.map(profile => ({
+        let repos = profiles.map(profile => ({
           id: profile.id,
           name: profile.name || profile.id,
           presetName: profile.presetName,
@@ -1080,11 +1203,41 @@ export default {
         // 2. 加载缓存快照并更新仓库数据缓存
         await dispatch('syncCacheToRepoData');
 
-        // 3. 如果有当前选中的仓库，应用其数据
-        if (repos.length > 0) {
-          const firstRepoId = repos[0].id;
-          commit('setCurrentRepoId', firstRepoId);
-          await dispatch('applyRepoData', firstRepoId);
+        // 3. 合并缓存中的仓库到可用仓库列表
+        repos = await dispatch('mergeCacheRepos', repos);
+        commit('setAvailableRepos', repos);
+
+        // 4. 智能选择仓库：优先级：当前仓库 > URL参数 > 有缓存的仓库 > 第一个仓库
+        let targetRepoId = null;
+        
+        // 4.1 优先保持当前仓库选择（如果存在且有数据）
+        if (state.currentRepoId && state.repoDataCache[state.currentRepoId]) {
+          targetRepoId = state.currentRepoId;
+          console.log('[initializeRepoManagement] Keeping current repo:', targetRepoId);
+        }
+        
+        // 4.2 尝试从URL参数获取仓库ID（由DashboardPage处理）
+        // 这里不处理，让DashboardPage的watch处理
+        
+        // 4.3 选择有缓存的第一个仓库
+        if (!targetRepoId && repos.length > 0) {
+          const cachedRepo = repos.find(repo => state.repoDataCache[repo.id]);
+          if (cachedRepo) {
+            targetRepoId = cachedRepo.id;
+            console.log('[initializeRepoManagement] Using cached repo:', targetRepoId);
+          }
+        }
+        
+        // 4.4 最后才选择第一个仓库
+        if (!targetRepoId && repos.length > 0) {
+          targetRepoId = repos[0].id;
+          console.log('[initializeRepoManagement] Using first repo as fallback:', targetRepoId);
+        }
+        
+        // 5. 应用选中的仓库数据
+        if (targetRepoId) {
+          commit('setCurrentRepoId', targetRepoId);
+          await dispatch('applyRepoData', targetRepoId);
         }
 
         return repos;
@@ -1137,11 +1290,14 @@ export default {
     /**
      * 强制刷新当前仓库
      */
-    async forceRefreshCurrentRepo({ dispatch, state }) {
+    async forceRefreshCurrentRepo({ commit, dispatch, state }) {
       if (!state.currentRepoId) {
         throw new Error('没有选中的仓库');
       }
-      return await dispatch('scanAndCacheRepo', state.currentRepoId);
+      await dispatch('scanAndCacheRepo', state.currentRepoId);
+      // 添加这行来触发UI更新
+      commit('applyRepoData', state.currentRepoId);
+      return state.repoDataCache[state.currentRepoId];
     },
 
     /**
@@ -1223,6 +1379,85 @@ export default {
     },
 
     /**
+     * 合并缓存中的仓库到可用仓库列表
+     */
+    async mergeCacheRepos({ commit, dispatch, state }, existingRepos) {
+      try {
+        // 获取所有缓存快照
+        const snapshots = await fetchScanCacheRequest();
+        if (!Array.isArray(snapshots)) {
+          return existingRepos;
+        }
+
+        console.log('[mergeCacheRepos] 开始合并，现有仓库:', existingRepos.map(r => ({ id: r.id, name: r.name, presetName: r.presetName })));
+        console.log('[mergeCacheRepos] 缓存快照:', snapshots.map(s => ({ 
+          taskId: s.taskId, 
+          repoId: s.repoId, 
+          snapshotPresetName: s.response?.presetName,
+          hasResponse: !!s.response,
+          summaryFiles: s.response?.summary?.totalFiles
+        })));
+
+        // 创建现有仓库ID的Set用于快速查找
+        const existingRepoIds = new Set(existingRepos.map(repo => repo.id));
+        const mergedRepos = [...existingRepos];
+
+        for (const snapshot of snapshots) {
+          const repoId = snapshot.repoId || snapshot.taskId || snapshot.response?.taskId;
+          
+          // 首先尝试匹配现有仓库
+          let matchedRepo = null;
+          if (repoId) {
+            matchedRepo = existingRepos.find(repo => 
+              repo.id === repoId ||
+              repo.presetName === snapshot.response?.presetName ||
+              repo.id === snapshot.response?.presetName
+            );
+          }
+          
+          // 如果匹配到现有仓库，更新其缓存状态，但不创建新条目
+          if (matchedRepo) {
+            console.log(`[mergeCacheRepos] ✅ 匹配到现有仓库: ${matchedRepo.name} (${matchedRepo.id})，跳过创建缓存仓库`);
+            continue;
+          }
+          
+          // 跳过已存在的仓库
+          if (repoId && !existingRepoIds.has(repoId)) {
+            let repoName = repoId; // 默认使用repoId作为名称
+            
+            // 尝试从snapshot中提取更好的名称
+            if (snapshot.response?.presetName) {
+              repoName = snapshot.response.presetName;
+            } else if (snapshot.response?.source && snapshot.response?.target) {
+              const sourceName = snapshot.response.source.split('/').pop();
+              const targetName = snapshot.response.target.split('/').pop();
+              repoName = `${sourceName} → ${targetName}`;
+            }
+            
+            const cacheRepo = {
+              id: repoId,
+              name: repoName,
+              presetName: snapshot.response?.presetName || '',
+              description: `缓存仓库 - ${new Date(snapshot.cachedAt || Date.now()).toLocaleString()}`,
+              isFromCache: true // 标记这是来自缓存的仓库
+            };
+            
+            mergedRepos.push(cacheRepo);
+            console.log(`[mergeCacheRepos] ➕ 添加新的缓存仓库: ${repoName} (${repoId})`);
+          } else if (repoId) {
+            console.log(`[mergeCacheRepos] ⏭️ 仓库已存在，跳过: ${repoId}`);
+          }
+        }
+
+        console.log('[mergeCacheRepos] 合并完成，最终仓库列表:', mergedRepos.map(r => ({ id: r.id, name: r.name, isFromCache: r.isFromCache })));
+        return mergedRepos;
+      } catch (error) {
+        console.warn('合并缓存仓库失败:', error);
+        return existingRepos;
+      }
+    },
+
+    /**
      * 同步后端缓存到本地仓库数据缓存
      */
     async syncCacheToRepoData({ commit, dispatch, state }) {
@@ -1230,10 +1465,56 @@ export default {
         const snapshots = await fetchScanCacheRequest();
         if (!Array.isArray(snapshots)) return;
 
+        console.log('[syncCacheToRepoData] 开始同步缓存，可用仓库:', state.availableRepos.map(r => ({ id: r.id, name: r.name, presetName: r.presetName })));
+
         for (const snapshot of snapshots) {
-          const repoId = snapshot.repoId || snapshot.taskId;
+          let repoId = snapshot.repoId || snapshot.taskId || snapshot.response?.taskId;
+          let matchedRepo = null;
+          
+          // 尝试匹配仓库配置，获取正确的repoId
+          if (!snapshot.repoId && snapshot.response?.taskId) {
+            // 多种匹配策略，按优先级排序
+            matchedRepo = state.availableRepos.find(repo => 
+              repo.presetName === snapshot.response.presetName ||
+              repo.id === snapshot.response.taskId ||
+              repo.id === snapshot.response?.presetName ||
+              (snapshot.response.source && snapshot.response.target && 
+               repo.oracle?.repoPath === snapshot.response.source &&
+               repo.gauss?.repoPath === snapshot.response.target)
+            );
+            
+            if (matchedRepo) {
+              repoId = matchedRepo.id;
+              console.log(`[syncCacheToRepoData] ✅ 匹配到仓库: ${matchedRepo.name} (${repoId})`, {
+                snapshotTaskId: snapshot.response?.taskId,
+                snapshotPresetName: snapshot.response?.presetName,
+                matchedRepoId: matchedRepo.id,
+                matchedRepoName: matchedRepo.name,
+                matchedRepoPresetName: matchedRepo.presetName
+              });
+            } else {
+              // 如果没有匹配到仓库，尝试从response中提取信息
+              if (snapshot.response.source && snapshot.response.target) {
+                const sourceName = snapshot.response.source.split('/').pop();
+                const targetName = snapshot.response.target.split('/').pop();
+                repoId = `${sourceName} → ${targetName}`;
+                console.log(`[syncCacheToRepoData] ⚠️ 未匹配到仓库，使用路径作为repoId: ${repoId}`, {
+                  snapshotTaskId: snapshot.response?.taskId,
+                  snapshotPresetName: snapshot.response?.presetName,
+                  generatedRepoId: repoId
+                });
+              }
+            }
+          }
+          
           if (repoId && snapshot.response) {
             await dispatch('applySnapshotToCache', { repoId, snapshot });
+            console.log(`[syncCacheToRepoData] 📦 同步缓存完成: ${repoId}`, {
+              hasRepoId: !!snapshot.repoId,
+              taskId: snapshot.taskId,
+              presetName: snapshot.response?.presetName,
+              matchedRepoName: matchedRepo?.name || 'none'
+            });
           }
         }
       } catch (error) {
@@ -1248,7 +1529,7 @@ export default {
       try {
         const snapshots = await fetchScanCacheRequest();
         return snapshots.find(snapshot => 
-          snapshot.repoId === repoId || snapshot.taskId === repoId
+          snapshot.repoId === repoId || snapshot.taskId === repoId || (!snapshot.repoId && snapshot.response?.taskId === repoId)
         );
       } catch (error) {
         console.warn('查找快照失败:', error);
@@ -1282,11 +1563,13 @@ export default {
           throw new Error(`找不到仓库配置: ${repoId}`);
         }
 
-        // 执行扫描
+        // 执行扫描，确保传递repoId和repoName
         const response = await scanFullRequest({
           presetName: repo.presetName || repoId,
           persistResult: true,
           taskId: createTaskId(),
+          repoId: repo.id,      // 新增：传递仓库ID
+          repoName: repo.name,  // 新增：传递仓库名称
         });
 
         // 缓存结果
@@ -1344,6 +1627,204 @@ export default {
         cachedAt: state.repoDataCache[repo.id]?.cachedAt,
         isCurrent: repo.id === state.currentRepoId,
       }));
+    },
+
+    // ========== 异步导出相关 actions ==========
+
+    /**
+     * 创建异步导出任务
+     */
+    async createAsyncExportTask({ commit, dispatch }, { repos, filters, format = 'csv' }) {
+      if (!Array.isArray(repos) || repos.length === 0) {
+        throw new Error('请至少选择一个任务');
+      }
+      
+      const exportFilters = buildExportFilters(filters || {});
+      const requestPayload = {
+        repos,
+        statuses: exportFilters.statuses,
+        coverageMin: exportFilters.coverageRange[0],
+        coverageMax: exportFilters.coverageRange[1],
+        includeEmptyCoverage: exportFilters.includeEmptyCoverage,
+        fileExtensions: exportFilters.fileExtensions,
+        excludeTestFiles: exportFilters.excludeTestFiles,
+        excludePatterns: exportFilters.excludePatterns,
+        includeCommitInfo: exportFilters.includeCommitInfo,
+        authorFilters: exportFilters.authorFilters,
+        authorTypeFilter: exportFilters.authorTypeFilter,
+        timeFrom: exportFilters.timeFrom,
+        timeTo: exportFilters.timeTo,
+        format,
+      };
+      
+      try {
+        const response = await createAsyncExportTask(requestPayload);
+        const taskData = response.data;
+        
+        // 设置当前任务
+        commit('setCurrentAsyncTask', taskData);
+        
+        // 添加到任务列表
+        commit('updateAsyncTaskStatus', { taskId: taskData.taskId, status: taskData });
+        
+        // 开始轮询状态
+        dispatch('startPollingTaskStatus', taskData.taskId);
+        
+        return taskData;
+      } catch (error) {
+        console.error('创建异步导出任务失败:', error);
+        throw new Error(`创建导出任务失败: ${error.message || error}`);
+      }
+    },
+
+    /**
+     * 开始轮询任务状态
+     */
+    startPollingTaskStatus({ commit, dispatch }, taskId) {
+      // 清除之前的轮询
+      commit('setPollingInterval', null);
+      
+      const interval = setInterval(async () => {
+        try {
+          const response = await getAsyncExportTaskStatus(taskId);
+          const taskStatus = response.data;
+          
+          // 更新任务状态
+          commit('updateAsyncTaskStatus', { taskId, status: taskStatus });
+          
+          // 如果任务完成，停止轮询
+          if (taskStatus.isFinished) {
+            commit('setPollingInterval', null);
+            
+            if (taskStatus.isDownloadable) {
+              // 自动下载文件
+              await dispatch('downloadAsyncExportFile', taskId);
+            }
+          }
+        } catch (error) {
+          console.error('轮询任务状态失败:', error);
+          // 轮询失败不停止，让用户手动重试
+        }
+      }, 2000); // 每2秒轮询一次
+      
+      commit('setPollingInterval', interval);
+    },
+
+    /**
+     * 停止轮询任务状态
+     */
+    stopPollingTaskStatus({ commit }) {
+      commit('setPollingInterval', null);
+    },
+
+    /**
+     * 下载异步导出文件
+     */
+    async downloadAsyncExportFile({ commit }, taskId) {
+      try {
+        const response = await downloadAsyncExportFile(taskId);
+        const filename = resolveFilenameFromResponse(response, `export-${taskId}.csv`);
+        downloadBlob(response.data, filename);
+        return filename;
+      } catch (error) {
+        console.error('下载异步导出文件失败:', error);
+        throw new Error(`下载文件失败: ${error.message || error}`);
+      }
+    },
+
+    /**
+     * 取消异步导出任务
+     */
+    async cancelAsyncExportTask({ commit, dispatch }, taskId) {
+      try {
+        await cancelAsyncExportTask(taskId);
+        
+        // 停止轮询
+        dispatch('stopPollingTaskStatus');
+        
+        // 从任务列表中移除
+        commit('removeAsyncTask', taskId);
+        
+        // 如果是当前任务，清空
+        if (taskId === commit('currentAsyncTask')?.taskId) {
+          commit('setCurrentAsyncTask', null);
+        }
+        
+        return true;
+      } catch (error) {
+        console.error('取消异步导出任务失败:', error);
+        throw new Error(`取消任务失败: ${error.message || error}`);
+      }
+    },
+
+    /**
+     * 获取所有异步导出任务
+     */
+    async fetchAllAsyncExportTasks({ commit }) {
+      commit('setLoadingAsyncExportTasks', true);
+      try {
+        const response = await getAllAsyncExportTasks();
+        const tasks = response.data?.tasks || [];
+        commit('setAsyncExportTasks', tasks);
+        return tasks;
+      } catch (error) {
+        console.error('获取异步导出任务列表失败:', error);
+        throw new Error(`获取任务列表失败: ${error.message || error}`);
+      } finally {
+        commit('setLoadingAsyncExportTasks', false);
+      }
+    },
+
+    /**
+     * 清理过期的异步导出任务
+     */
+    async cleanupExpiredAsyncExportTasks({ commit, dispatch }) {
+      try {
+        await cleanupExpiredAsyncExportTasks();
+        
+        // 重新获取任务列表
+        await dispatch('fetchAllAsyncExportTasks');
+        
+        return true;
+      } catch (error) {
+        console.error('清理过期异步导出任务失败:', error);
+        throw new Error(`清理过期任务失败: ${error.message || error}`);
+      }
+    },
+
+    /**
+     * 智能导出：根据数据量自动选择同步或异步导出
+     */
+    async smartExport({ commit, dispatch }, { repos, filters, format = 'csv' }) {
+      // 简单判断：如果选择的仓库数量超过3个或包含提交信息，使用异步导出
+      const shouldUseAsync = repos.length > 3 || (filters && filters.includeCommitInfo);
+      
+      if (shouldUseAsync) {
+        // 使用异步导出
+        return await dispatch('createAsyncExportTask', { repos, filters, format });
+      } else {
+        // 使用同步导出，但设置超时处理
+        return new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            // 同步导出超时，切换到异步导出
+            console.log('同步导出超时，切换到异步导出');
+            dispatch('createAsyncExportTask', { repos, filters, format })
+              .then(resolve)
+              .catch(reject);
+          }, 30000); // 30秒超时
+          
+          // 尝试同步导出
+          dispatch('exportMultiReport', { repos, filters, format })
+            .then(result => {
+              clearTimeout(timeout);
+              resolve(result);
+            })
+            .catch(error => {
+              clearTimeout(timeout);
+              reject(error);
+            });
+        });
+      }
     },
   },
 };

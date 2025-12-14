@@ -105,33 +105,76 @@ export default {
       const oracle = this.oracleDiff || {};
       const gauss = this.gaussDiff || {};
       const migration = this.migrationDiff || '';
+      
+      // 添加详细的调试日志
+      console.group('[FileDiffViewer] diffContent calculation');
+      console.log('Mode:', this.mode);
+      console.log('Oracle diff:', {
+        beforeLength: oracle.before?.length || 0,
+        afterLength: oracle.after?.length || 0,
+        before: oracle.before?.substring(0, 100),
+        after: oracle.after?.substring(0, 100)
+      });
+      console.log('Gauss diff:', {
+        beforeLength: gauss.before?.length || 0,
+        afterLength: gauss.after?.length || 0,
+        before: gauss.before?.substring(0, 100),
+        after: gauss.after?.substring(0, 100)
+      });
+      console.log('Migration diff length:', migration.length);
+      
+      let result;
       switch (this.mode) {
         case 'deltaG':
-          return {
+          result = {
             original: gauss.before || '',
             modified: gauss.after || '',
             title: 'ΔG(g1→g2)',
           };
+          break;
         case 'deltaCompare':
-          return {
+          result = {
             original: oracle.after || '',
             modified: gauss.after || '',
             title: 'ΔO vs ΔG',
           };
+          console.log('ΔOvsΔG result:', {
+            originalLength: result.original.length,
+            modifiedLength: result.modified.length,
+            original: result.original.substring(0, 100),
+            modified: result.modified.substring(0, 100)
+          });
+          break;
         case 'migration':
-          return {
+          result = {
             original: gauss.after || '',
             modified: migration || '',
             title: '迁移结果',
           };
+          console.log('Migration result:', {
+            originalLength: result.original.length,
+            modifiedLength: result.modified.length,
+            original: result.original.substring(0, 100),
+            modified: result.modified.substring(0, 100)
+          });
+          break;
         case 'deltaO':
         default:
-          return {
+          result = {
             original: oracle.before || '',
             modified: oracle.after || '',
             title: 'ΔO(o1→o2)',
           };
       }
+      
+      console.log('Final result:', {
+        originalLength: result.original.length,
+        modifiedLength: result.modified.length,
+        title: result.title
+      });
+      console.groupEnd();
+      
+      return result;
     },
     headerTitle() {
       return this.diffContent.title;
@@ -198,26 +241,64 @@ export default {
     },
     updateModel() {
       if (!this.editor) {
+        console.warn('[FileDiffViewer] updateModel called but editor is not initialized');
         return;
       }
+      
+      // 添加调试日志
+      console.log('[FileDiffViewer] updateModel called:', {
+        mode: this.mode,
+        originalLength: this.diffContent.original?.length || 0,
+        modifiedLength: this.diffContent.modified?.length || 0,
+        hasOriginalModel: !!this.models.original,
+        hasModifiedModel: !!this.models.modified
+      });
+      
       this.disposeModels();
       const language = this.resolveLanguage(this.filePath);
+      const originalContent = this.diffContent.original || '';
+      const modifiedContent = this.diffContent.modified || '';
+      
+      console.log('[FileDiffViewer] Creating models:', {
+        language,
+        originalContentLength: originalContent.length,
+        modifiedContentLength: modifiedContent.length,
+        originalPreview: originalContent.substring(0, 100),
+        modifiedPreview: modifiedContent.substring(0, 100)
+      });
+      
       const originalModel = monaco.editor.createModel(
-        this.diffContent.original || '',
+        originalContent,
         language
       );
       const modifiedModel = monaco.editor.createModel(
-        this.diffContent.modified || '',
+        modifiedContent,
         language
       );
+      
       this.models = {
         original: originalModel,
         modified: modifiedModel,
       };
+      
+      console.log('[FileDiffViewer] Setting models to editor');
       this.editor.setModel({
         original: originalModel,
         modified: modifiedModel,
       });
+      
+      // 验证模型是否设置成功
+      setTimeout(() => {
+        const editorModel = this.editor.getModel();
+        console.log('[FileDiffViewer] Model verification after 100ms:', {
+          hasEditorModel: !!editorModel,
+          hasOriginalModel: !!editorModel?.original,
+          hasModifiedModel: !!editorModel?.modified,
+          originalValueLength: editorModel?.original?.getValue()?.length || 0,
+          modifiedValueLength: editorModel?.modified?.getValue()?.length || 0
+        });
+      }, 100);
+      
       this.$nextTick(() => this.scheduleLayout(true));
     },
     updateOptions() {

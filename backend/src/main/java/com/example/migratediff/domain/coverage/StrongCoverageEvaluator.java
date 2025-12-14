@@ -3,6 +3,7 @@ package com.example.migratediff.domain.coverage;
 import com.example.migratediff.domain.diff.DiffBlock;
 import com.example.migratediff.domain.diff.DiffFile;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -19,9 +20,13 @@ import java.util.List;
 public class StrongCoverageEvaluator {
 
     private final StrongBlockMapper blockMapper;
+    private final com.example.migratediff.domain.coverage.optimization.CoverageOptimizationManager optimizationManager;
 
-    public StrongCoverageEvaluator(StrongBlockMapper blockMapper) {
+    @Autowired
+    public StrongCoverageEvaluator(StrongBlockMapper blockMapper, 
+                               com.example.migratediff.domain.coverage.optimization.CoverageOptimizationManager optimizationManager) {
         this.blockMapper = blockMapper;
+        this.optimizationManager = optimizationManager;
     }
 
     /**
@@ -43,10 +48,13 @@ public class StrongCoverageEvaluator {
         }
 
         // 使用Strong模式块映射算法
-        BlockMapping mapping = blockMapper.mapBlocksBestMatch(originBlocks, targetBlocks, 0.1);
+        BlockMapping originalMapping = blockMapper.mapBlocksBestMatch(originBlocks, targetBlocks, 0.6);
+        
+        // 应用优化策略
+        BlockMapping optimizedMapping = optimizationManager.optimizeMapping(originalMapping, originFile, targetFile);
         
         // 计算Strong模式的覆盖率指标
-        return calculateStrongCoverageDetail(originFile, mapping, threshold, criticalMissThreshold);
+        return calculateStrongCoverageDetail(originFile, optimizedMapping, threshold, criticalMissThreshold);
     }
 
     /**
@@ -55,6 +63,10 @@ public class StrongCoverageEvaluator {
      */
     private CoverageDetail calculateStrongCoverageDetail(DiffFile originFile, BlockMapping mapping, 
                                                 double displayThreshold, double criticalMissThreshold) {
+        // 调整关键丢失阈值从默认值到0.6，提高严格度
+        if (criticalMissThreshold < 0.6) {
+            criticalMissThreshold = 0.6;
+        }
         List<DiffBlock> allBlocks = new ArrayList<>();
         List<DiffBlock> highSimilarityBlocks = new ArrayList<>();
         List<DiffBlock> lowSimilarityBlocks = new ArrayList<>();

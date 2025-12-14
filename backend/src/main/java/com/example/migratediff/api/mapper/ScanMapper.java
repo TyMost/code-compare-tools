@@ -32,11 +32,13 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
+import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Component
 public class ScanMapper {
 
@@ -220,9 +222,14 @@ public class ScanMapper {
             result.setIncludeWorkingTree(preset.isIncludeWorkingTree());
             result.setFetchIfMissing(preset.isFetchIfMissing());
             result.setRemoteName(preset.getRemoteName());
+            result.setScanStrategy(preset.getScanStrategy());
             result.setSnapshotIncludeRemoteRefs(preset.isSnapshotIncludeRemoteRefs());
             result.setSnapshotIncludeTags(preset.isSnapshotIncludeTags());
             result.setSnapshotMaxRefs(preset.getSnapshotMaxRefs());
+            
+            // 添加调试日志
+            log.info("Loaded preset: scanStrategy={}, path={}, code={}", 
+                    preset.getScanStrategy(), preset.getPath(), preset.getCode());
         }
         if (override != null) {
             if (StringUtils.hasText(override.getRepoPath())) {

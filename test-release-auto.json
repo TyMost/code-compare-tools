@@ -1,0 +1,11 @@
+{
+  "presetName": "JeecgBoot",
+  "taskId": "test-release-auto-123",
+  "oracle": {
+    "repoPath": "D:\\Coding\\code-compare-tools\\examples\\JeecgBoot"
+  },
+  "gauss": {
+    "repoPath": "D:\\Coding\\code-compare-tools\\examples\\JeecgBoot"
+  },
+  "persistResult": false
+}
