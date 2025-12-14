@@ -75,7 +75,7 @@ class StrongCoverageEvaluatorIntegrationTest {
 
         // 创建原始块映射（模拟较低的相似度）
         BlockMapping originalMapping = createLowSimilarityMapping(originFile, targetFile, 0.6);
-        when(mockBlockMapper.mapBlocksBestMatch(any(), any(), any())).thenReturn(originalMapping);
+        when(mockBlockMapper.mapBlocksBestMatch(originFile.getBlocks(), targetFile.getBlocks(), 0.6)).thenReturn(originalMapping);
 
         // 执行评估
         CoverageDetail result = coverageEvaluator.evaluateFile(originFile, targetFile, 0.8, 0.3);
@@ -108,7 +108,7 @@ class StrongCoverageEvaluatorIntegrationTest {
 
         // 创建完美匹配的映射
         BlockMapping perfectMapping = createPerfectSimilarityMapping(originFile, targetFile);
-        when(mockBlockMapper.mapBlocksBestMatch(any(), any(), any())).thenReturn(perfectMapping);
+        when(mockBlockMapper.mapBlocksBestMatch(originFile.getBlocks(), targetFile.getBlocks(), 0.6)).thenReturn(perfectMapping);
 
         // 执行评估
         CoverageDetail result = coverageEvaluator.evaluateFile(originFile, targetFile, 0.8, 0.3);
