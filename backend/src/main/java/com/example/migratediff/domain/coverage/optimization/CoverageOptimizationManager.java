@@ -212,8 +212,9 @@ public class CoverageOptimizationManager {
             case "FULL_FILE_CONTEXT":
                 return config.getFullFileContext().isEnabled();
             case "FULL_FILE_CONTEXT_V2":
-                // V2策略使用独立的配置，默认启用
-                return true;
+                // V2策略已移除，默认禁用
+                log.warn("FULL_FILE_CONTEXT_V2策略已移除，跳过执行");
+                return false;
             case "LLM_JUDGMENT":
                 return config.getLlmJudgment().isEnabled();
             default:
