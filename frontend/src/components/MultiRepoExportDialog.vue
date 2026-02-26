@@ -132,15 +132,6 @@
 import { mapState, mapActions, mapGetters } from 'vuex';
 import DiffMatrixFilters from './DiffMatrixFilters.vue';
 
-const STATUS_OPTIONS = [
-  { value: 'matched', label: '已匹配' },
-  { value: 'partial', label: '存在差异' },
-  { value: 'oracle-only', label: '仅 ΔO' },
-  { value: 'gauss-only', label: '仅 ΔG' },
-  { value: 'pending', label: '待处理' },
-  { value: 'processing', label: '处理中' },
-];
-
 export default {
   name: 'MultiRepoExportDialog',
   components: {

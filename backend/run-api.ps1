@@ -2,8 +2,8 @@ $ErrorActionPreference = 'Stop'
 
 $backendPath = 'D:\Coding\code-compare-tools\backend'
 $jarPath = Join-Path $backendPath 'target\migratediff-backend-0.0.1-SNAPSHOT.jar'
-$baseUri = 'http://localhost:8080'
-$taskId = 'doc-rerun-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-8080'
+$baseUri = 'http://localhost:8081'
+$taskId = 'doc-rerun-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-8081'
 
 $job = Start-Job -InitializationScript { $ErrorActionPreference = 'Stop' } -ScriptBlock {
     param($backendPath, $jarPath)

@@ -1381,7 +1381,7 @@ export default {
     /**
      * 合并缓存中的仓库到可用仓库列表
      */
-    async mergeCacheRepos({ commit, dispatch, state }, existingRepos) {
+    async mergeCacheRepos(_context, existingRepos) {
       try {
         // 获取所有缓存快照
         const snapshots = await fetchScanCacheRequest();
@@ -1460,7 +1460,7 @@ export default {
     /**
      * 同步后端缓存到本地仓库数据缓存
      */
-    async syncCacheToRepoData({ commit, dispatch, state }) {
+    async syncCacheToRepoData({ dispatch, state }) {
       try {
         const snapshots = await fetchScanCacheRequest();
         if (!Array.isArray(snapshots)) return;
@@ -1525,7 +1525,7 @@ export default {
     /**
      * 查找指定仓库的缓存快照
      */
-    async findSnapshotForRepo({ state }, repoId) {
+    async findSnapshotForRepo(_context, repoId) {
       try {
         const snapshots = await fetchScanCacheRequest();
         return snapshots.find(snapshot => 
@@ -1554,7 +1554,7 @@ export default {
     /**
      * 扫描指定仓库并缓存结果
      */
-    async scanAndCacheRepo({ commit, dispatch, state }, repoId) {
+    async scanAndCacheRepo({ commit, state }, repoId) {
       commit('setScanning', true);
       try {
         // 获取仓库配置
@@ -1720,7 +1720,7 @@ export default {
     /**
      * 下载异步导出文件
      */
-    async downloadAsyncExportFile({ commit }, taskId) {
+    async downloadAsyncExportFile(_context, taskId) {
       try {
         const response = await downloadAsyncExportFile(taskId);
         const filename = resolveFilenameFromResponse(response, `export-${taskId}.csv`);
@@ -1778,7 +1778,7 @@ export default {
     /**
      * 清理过期的异步导出任务
      */
-    async cleanupExpiredAsyncExportTasks({ commit, dispatch }) {
+    async cleanupExpiredAsyncExportTasks({ dispatch }) {
       try {
         await cleanupExpiredAsyncExportTasks();
         
@@ -1795,7 +1795,7 @@ export default {
     /**
      * 智能导出：根据数据量自动选择同步或异步导出
      */
-    async smartExport({ commit, dispatch }, { repos, filters, format = 'csv' }) {
+    async smartExport({ dispatch }, { repos, filters, format = 'csv' }) {
       // 简单判断：如果选择的仓库数量超过3个或包含提交信息，使用异步导出
       const shouldUseAsync = repos.length > 3 || (filters && filters.includeCommitInfo);
       

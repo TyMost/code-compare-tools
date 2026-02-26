@@ -173,7 +173,6 @@ import { mapState, mapActions, mapMutations, mapGetters } from 'vuex';
 import DiffToolbar from '../components/DiffToolbar.vue';
 import FileDiffViewer from '../components/FileDiffViewer.vue';
 import BlockMappingViewer from '../components/BlockMappingViewer.vue';
-import commitApi from '../api/commit';
 
 export default {
   name: 'FileDiffPage',
@@ -334,25 +333,6 @@ export default {
           // 预加载块映射缓存
           this.preloadBlockMappingCache();
         }
-      },
-    },
-
-    // 监听taskId变化
-    'taskId': {
-      immediate: true,
-      handler(newTaskId, oldTaskId) {
-        console.log('[🔍 DEBUG] FileDiffPage taskId changed:', { newTaskId, oldTaskId });
-      },
-    },
-
-    // 监听diffMatrix变化
-    'diffMatrix': {
-      immediate: true,
-      handler(newMatrix, oldMatrix) {
-        console.log('[🔍 DEBUG] FileDiffPage diffMatrix changed:', { 
-          newLength: newMatrix?.length || 0, 
-          oldLength: oldMatrix?.length || 0 
-        });
       },
     },
   },
