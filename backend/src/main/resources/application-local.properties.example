@@ -1,0 +1,18 @@
+# 复制为 application-local.properties 并按本机环境修改
+
+# 本地调试可改端口
+# server.port=8081
+
+# 示例：本地预置扫描仓库
+migratediff.presets[0].name=local-example
+migratediff.presets[0].source.code=o
+migratediff.presets[0].source.path=/absolute/path/to/source/repo
+migratediff.presets[0].source.scan-strategy=release-auto
+migratediff.presets[0].source.time-from=2025-01-01T00:00:00Z
+migratediff.presets[0].source.time-to=2025-01-31T23:59:59Z
+
+migratediff.presets[0].target.code=g
+migratediff.presets[0].target.path=/absolute/path/to/target/repo
+migratediff.presets[0].target.scan-strategy=release-auto
+migratediff.presets[0].target.time-from=2025-01-01T00:00:00Z
+migratediff.presets[0].target.time-to=2025-01-31T23:59:59Z
