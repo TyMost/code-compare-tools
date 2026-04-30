@@ -122,4 +122,4 @@ mvn test
 
 ## License
 
-Private - All rights reserved.
+MIT License - see [LICENSE](LICENSE) 文件。
