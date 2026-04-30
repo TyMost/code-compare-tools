@@ -1,0 +1,1830 @@
+import {
+  scanFull as scanFullRequest,
+  fetchDetail as fetchDetailRequest,
+  fetchRecentTasks as fetchRecentTasksRequest,
+  exportMultiReport as exportMultiReportRequest,
+  fetchScanCache as fetchScanCacheRequest,
+  clearScanCache as clearScanCacheRequest,
+  createAsyncExportTask,
+  getAsyncExportTaskStatus,
+  downloadAsyncExportFile,
+  cancelAsyncExportTask,
+  getAllAsyncExportTasks,
+  cleanupExpiredAsyncExportTasks,
+} from '../api/diff';
+import commitApi from '../api/commit';
+import {
+  generateMigration as generateMigrationRequest,
+  applyMigration as applyMigrationRequest,
+  revertMigration as revertMigrationRequest,
+} from '../api/migrate';
+import { fetchDefaultProfiles as fetchRepoProfilesBundle, validateProfiles as validateRepoProfiles } from '../api/repos';
+import { createTaskId } from '../utils/uid';
+import { downloadBlob, parseFilename } from '../utils/download';
+
+const PROFILE_STORAGE_KEY = 'migratediff.repoProfiles';
+const DEFAULT_BUNDLE_META = () => ({
+  version: '',
+  generatedAt: '',
+});
+
+const defaultSummary = () => ({
+  totalFiles: 0,
+  oracleOnly: 0,
+  gaussOnly: 0,
+  matched: 0,
+  consistencyRate: 0,
+  overallCoverage: null,
+});
+
+const defaultStats = () => ({
+  oracleAdded: 0,
+  oracleRemoved: 0,
+  gaussAdded: 0,
+  gaussRemoved: 0,
+});
+
+const defaultMatrixFilters = () => ({
+  statuses: [],
+  coverageRange: [0, 1],
+  includeEmptyCoverage: true,
+  fileExtensions: [],
+  excludeTestFiles: false,
+  excludePatterns: [],
+  includeCommitInfo: false,
+  authorFilters: [],
+  authorTypeFilter: '',
+  timeRange: [],
+});
+
+const defaultCurrentFile = () => ({
+  filePath: '',
+  module: '',
+  coverage: null,
+  oracleDiff: {
+    before: '',
+    after: '',
+  },
+  gaussDiff: {
+    before: '',
+    after: '',
+  },
+  migrationDiff: '',
+  stats: defaultStats(),
+  commitHistory: null,
+});
+
+const defaultCommitHistory = () => ({
+  filePath: '',
+  oracleCommits: [],
+  gaussCommits: [],
+  totalCount: 0,
+  oracleCount: 0,
+  gaussCount: 0,
+  hasOracleCommits: false,
+  hasGaussCommits: false,
+});
+
+function sanitizeCoverageRange(range) {
+  if (!Array.isArray(range) || range.length !== 2) {
+    return [0, 1];
+  }
+  const [min, max] = range;
+  const lower = Number.isNaN(Number(min)) ? 0 : Number(min);
+  const upper = Number.isNaN(Number(max)) ? 1 : Number(max);
+  return [Math.max(0, lower), Math.min(1, upper)];
+}
+
+function buildExportFilters(source = {}) {
+  return {
+    statuses: Array.isArray(source.statuses) ? [...source.statuses] : [],
+    coverageRange: sanitizeCoverageRange(source.coverageRange),
+    includeEmptyCoverage:
+      source.includeEmptyCoverage === undefined ? true : !!source.includeEmptyCoverage,
+    fileExtensions: Array.isArray(source.fileExtensions) ? [...source.fileExtensions] : [],
+    excludeTestFiles: source.excludeTestFiles === undefined ? false : !!source.excludeTestFiles,
+    excludePatterns: Array.isArray(source.excludePatterns) ? [...source.excludePatterns] : [],
+    includeCommitInfo: source.includeCommitInfo === undefined ? false : !!source.includeCommitInfo,
+    authorFilters: Array.isArray(source.authorFilters) ? [...source.authorFilters] : [],
+    authorTypeFilter: source.authorTypeFilter || '',
+    timeFrom: source.timeFrom || null,
+    timeTo: source.timeTo || null,
+  };
+}
+
+function resolveFilenameFromResponse(response, fallback = 'scan-report.csv') {
+  const disposition =
+    response?.headers?.['content-disposition'] || response?.headers?.get?.('content-disposition');
+  const parsed = parseFilename(disposition);
+  return parsed || fallback;
+}
+
+function readProfilesFromStorage() {
+  if (typeof window === 'undefined') {
+    return {
+      profiles: [],
+      meta: DEFAULT_BUNDLE_META(),
+    };
+  }
+  try {
+    const stored = window.localStorage.getItem(PROFILE_STORAGE_KEY);
+    if (!stored) {
+      return {
+        profiles: [],
+        meta: DEFAULT_BUNDLE_META(),
+      };
+    }
+    const parsed = JSON.parse(stored);
+    if (Array.isArray(parsed)) {
+      return {
+        profiles: parsed,
+        meta: DEFAULT_BUNDLE_META(),
+      };
+    }
+    if (parsed && Array.isArray(parsed.profiles)) {
+      return {
+        profiles: parsed.profiles,
+        meta: buildBundleMeta(parsed),
+      };
+    }
+    return {
+      profiles: [],
+      meta: DEFAULT_BUNDLE_META(),
+    };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn('[profiles] failed to parse storage payload', error);
+    return {
+      profiles: [],
+      meta: DEFAULT_BUNDLE_META(),
+    };
+  }
+}
+
+function writeProfilesToStorage(profiles = [], meta = DEFAULT_BUNDLE_META()) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const payload = {
+    version: meta?.version || '',
+    generatedAt: meta?.generatedAt || '',
+    profiles,
+  };
+  window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(payload));
+}
+
+function cloneDiffRequest(request = {}) {
+  return {
+    ...request,
+  };
+}
+
+function buildBundleMeta(source = {}) {
+  if (!source) {
+    return DEFAULT_BUNDLE_META();
+  }
+  return {
+    version: source.version || '',
+    generatedAt: source.generatedAt || '',
+  };
+}
+
+function mergeBundleMeta(current = DEFAULT_BUNDLE_META(), incoming = DEFAULT_BUNDLE_META()) {
+  const meta = DEFAULT_BUNDLE_META();
+  meta.version = incoming.version || current.version || '';
+  meta.generatedAt = incoming.generatedAt || current.generatedAt || '';
+  return meta;
+}
+
+function normalizeBundleInput(payload) {
+  if (!payload) {
+    return {
+      profiles: [],
+      meta: DEFAULT_BUNDLE_META(),
+    };
+  }
+  if (payload.bundle || payload.replaceExisting !== undefined) {
+    return normalizeBundleInput(payload.bundle);
+  }
+  if (Array.isArray(payload)) {
+    return {
+      profiles: payload,
+      meta: DEFAULT_BUNDLE_META(),
+    };
+  }
+  if (Array.isArray(payload.profiles)) {
+    return {
+      profiles: payload.profiles,
+      meta: buildBundleMeta(payload),
+    };
+  }
+  return {
+      profiles: [],
+      meta: DEFAULT_BUNDLE_META(),
+    };
+}
+
+function normalizeProfile(record = {}, fallbackVersion = '') {
+  const oracle = record.oracle || record.source;
+  const gauss = record.gauss || record.target;
+  if (!oracle || !gauss) {
+    throw new Error('配置缺少 oracle 或 gauss 字段');
+  }
+  const id = (record.id || record.repoId || record.name || record.code || '').trim()
+    || `profile-${createTaskId()}`;
+  const name = (record.name || record.repoName || id).trim();
+  return {
+    id,
+    name,
+    presetName: record.presetName || '',
+    version: record.version || fallbackVersion || '',
+    oracle: cloneDiffRequest(oracle),
+    gauss: cloneDiffRequest(gauss),
+  };
+}
+
+function normalizeProfiles(payload, fallbackVersion = '') {
+  if (!payload) {
+    return [];
+  }
+  const source = Array.isArray(payload) ? payload : [payload];
+  const results = [];
+  source.forEach((item) => {
+    try {
+      results.push(normalizeProfile(item, fallbackVersion));
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn('[profiles] 忽略无效配置', error?.message);
+    }
+  });
+  return results;
+}
+
+function mergeProfiles(existing = [], incoming = []) {
+  if (!incoming.length) {
+    return existing;
+  }
+  const map = new Map(existing.map((profile) => [profile.id, profile]));
+  incoming.forEach((profile) => {
+    map.set(profile.id, profile);
+  });
+  return Array.from(map.values());
+}
+
+function resolveSnapshotKey(snapshot) {
+  if (!snapshot) {
+    return '';
+  }
+  return snapshot.repoId || snapshot.taskId || '';
+}
+
+// 文件模式匹配工具函数
+function convertWildcardToRegex(pattern) {
+  if (!pattern || typeof pattern !== 'string') {
+    return null;
+  }
+  
+  // 检查是否为正则表达式（用 / 包裹）
+  if (pattern.startsWith('/') && pattern.endsWith('/') && pattern.length > 2) {
+    try {
+      return new RegExp(pattern.slice(1, -1));
+    } catch (error) {
+      console.warn('[pattern] 无效的正则表达式:', pattern, error);
+      return null;
+    }
+  }
+  
+  // 转换通配符为正则表达式
+  const regexPattern = pattern
+    .replace(/\./g, '\\.')  // 转义点号
+    .replace(/\*/g, '.*')   // * 转换为 .*
+    .replace(/\?/g, '.');   // ? 转换为 .
+  
+  try {
+    return new RegExp(`^${regexPattern}$`);
+  } catch (error) {
+    console.warn('[pattern] 无效的模式:', pattern, error);
+    return null;
+  }
+}
+
+function matchPattern(filePath, pattern) {
+  if (!filePath || !pattern) {
+    return false;
+  }
+  
+  const regex = convertWildcardToRegex(pattern);
+  if (!regex) {
+    return false;
+  }
+  
+  // 提取文件名进行匹配
+  const fileName = filePath.split('/').pop() || filePath;
+  return regex.test(fileName);
+}
+
+function isTestFile(filePath) {
+  if (!filePath) {
+    return false;
+  }
+  
+  const fileName = filePath.split('/').pop() || filePath;
+  const testPatterns = [
+    /test/i,
+    /spec/i,
+    /.*test.*/i,
+    /.*Test.*/i,
+    /_test\./,
+    /_spec\./,
+    /\.test\./,
+    /\.spec\./
+  ];
+  
+  return testPatterns.some(pattern => pattern.test(fileName));
+}
+
+function matchesExcludePatterns(filePath, patterns) {
+  if (!Array.isArray(patterns) || patterns.length === 0) {
+    return false;
+  }
+  
+  return patterns.some(pattern => matchPattern(filePath, pattern));
+}
+
+export default {
+  namespaced: true,
+  state: () => ({
+    // 简化的仓库管理
+    currentRepoId: '',
+    availableRepos: [],
+    repoDataCache: {}, // 仓库数据缓存 { repoId: { taskId, summary, diffMatrix, overallCoverage, cachedAt } }
+    
+    // 当前显示数据
+    taskId: '',
+    summary: defaultSummary(),
+    overallCoverage: null,
+    diffMatrix: [],
+    currentFile: defaultCurrentFile(),
+    
+    // 扫描状态
+    isScanning: false,
+    lastScanTime: null,
+    
+    // 批量刷新状态
+    batchRefreshing: false,
+    batchRefreshProgress: {
+      current: 0,
+      total: 0,
+      currentRepo: '',
+      errors: []
+    },
+    
+    // 过滤器和其他状态
+    matrixFilters: defaultMatrixFilters(),
+    loadingDetail: false,
+    loadingCommitHistory: false,
+    migrating: false,
+    diffMode: 'deltaO',
+    availableTasks: [],
+    loadingTasks: false,
+    exportingReport: false,
+    exportProgress: {
+      stage: '',
+      message: '',
+      current: 0,
+      total: 0,
+      percentage: 0,
+    },
+    
+    // 异步导出相关状态
+    asyncExportTasks: [],
+    loadingAsyncExportTasks: false,
+    currentAsyncTask: null,
+    pollingInterval: null,
+    
+    // 兼容性字段（保留现有组件使用）
+    cachedSnapshots: [],
+    loadingSnapshots: false,
+    activeRepoId: '',
+    repoProfiles: [],
+    selectedProfileIds: [],
+    profileBundleMeta: DEFAULT_BUNDLE_META(),
+  }),
+  mutations: {
+    setTaskId(state, taskId) {
+      state.taskId = taskId || '';
+    },
+    setSummary(state, payload) {
+      state.summary = {
+        ...defaultSummary(),
+        ...payload,
+      };
+    },
+    setOverallCoverage(state, coverage) {
+      state.overallCoverage = coverage === null || coverage === undefined ? null : coverage;
+    },
+    setDiffMatrix(state, payload) {
+      state.diffMatrix = Array.isArray(payload) ? payload : [];
+    },
+    setMatrixFilters(state, payload = {}) {
+      const incoming = Array.isArray(payload.coverageRange)
+        ? [...payload.coverageRange]
+        : null;
+      state.matrixFilters = {
+        ...state.matrixFilters,
+        statuses: Array.isArray(payload.statuses) ? [...payload.statuses] : state.matrixFilters.statuses,
+        coverageRange: incoming || state.matrixFilters.coverageRange,
+        includeEmptyCoverage:
+          payload.includeEmptyCoverage === undefined
+            ? state.matrixFilters.includeEmptyCoverage
+            : !!payload.includeEmptyCoverage,
+        fileExtensions: Array.isArray(payload.fileExtensions) 
+          ? [...payload.fileExtensions] 
+          : state.matrixFilters.fileExtensions,
+        excludeTestFiles: payload.excludeTestFiles === undefined 
+          ? state.matrixFilters.excludeTestFiles 
+          : !!payload.excludeTestFiles,
+        excludePatterns: Array.isArray(payload.excludePatterns) 
+          ? [...payload.excludePatterns] 
+          : state.matrixFilters.excludePatterns,
+        includeCommitInfo: payload.includeCommitInfo === undefined 
+          ? state.matrixFilters.includeCommitInfo 
+          : !!payload.includeCommitInfo,
+        authorFilters: Array.isArray(payload.authorFilters) 
+          ? [...payload.authorFilters] 
+          : state.matrixFilters.authorFilters,
+        authorTypeFilter: payload.authorTypeFilter === undefined 
+          ? state.matrixFilters.authorTypeFilter 
+          : payload.authorTypeFilter,
+        timeRange: Array.isArray(payload.timeRange) 
+          ? [...payload.timeRange] 
+          : state.matrixFilters.timeRange,
+      };
+    },
+    resetMatrixFilters(state) {
+      state.matrixFilters = defaultMatrixFilters();
+    },
+    setCurrentFile(state, payload) {
+      const base = defaultCurrentFile();
+      const incomingStats = (payload && payload.stats) || {};
+      state.currentFile = {
+        ...base,
+        ...payload,
+        stats: {
+          ...base.stats,
+          ...incomingStats,
+        },
+      };
+    },
+    setLoadingMatrix(state, flag) {
+      state.loadingMatrix = flag;
+    },
+    setLoadingDetail(state, flag) {
+      state.loadingDetail = flag;
+    },
+    setMigrating(state, flag) {
+      state.migrating = flag;
+    },
+    setDiffMode(state, mode) {
+      state.diffMode = mode;
+    },
+    setAvailableTasks(state, tasks) {
+      state.availableTasks = Array.isArray(tasks) ? [...tasks] : [];
+    },
+    setLoadingTasks(state, flag) {
+      state.loadingTasks = flag;
+    },
+    setExportingReport(state, flag) {
+      state.exportingReport = flag;
+    },
+    setRepoProfiles(state, profiles) {
+      state.repoProfiles = Array.isArray(profiles) ? [...profiles] : [];
+    },
+    setSelectedProfileIds(state, ids) {
+      state.selectedProfileIds = Array.isArray(ids) ? [...ids] : [];
+    },
+    setCachedSnapshots(state, snapshots) {
+      state.cachedSnapshots = Array.isArray(snapshots) ? [...snapshots] : [];
+    },
+    setLoadingSnapshots(state, flag) {
+      state.loadingSnapshots = flag;
+    },
+    setActiveRepoId(state, repoId) {
+      state.activeRepoId = repoId || '';
+    },
+    setProfileBundleMeta(state, meta) {
+      const next = meta || {};
+      state.profileBundleMeta = {
+        version: next.version || '',
+        generatedAt: next.generatedAt || '',
+      };
+    },
+    setCommitHistory(state, commitHistory) {
+      state.currentFile.commitHistory = commitHistory || null;
+    },
+    setLoadingCommitHistory(state, flag) {
+      state.loadingCommitHistory = flag;
+    },
+    // 新增的简化仓库管理 mutations
+    setCurrentRepoId(state, repoId) {
+      state.currentRepoId = repoId || '';
+      state.activeRepoId = repoId || ''; // 兼容性
+    },
+    setAvailableRepos(state, repos) {
+      state.availableRepos = Array.isArray(repos) ? [...repos] : [];
+    },
+    setRepoDataCache(state, { repoId, data }) {
+      if (!repoId || !data) return;
+      state.repoDataCache = {
+        ...state.repoDataCache,
+        [repoId]: {
+          ...data,
+          cachedAt: new Date().toISOString(),
+        },
+      };
+    },
+    clearRepoDataCache(state) {
+      state.repoDataCache = {};
+    },
+    setScanning(state, flag) {
+      state.isScanning = flag;
+      state.loadingMatrix = flag; // 兼容性
+    },
+    setLastScanTime(state, time) {
+      state.lastScanTime = time;
+    },
+    applyRepoData(state, repoId) {
+      const cached = state.repoDataCache[repoId];
+      if (!cached) {
+        // 清空当前数据
+        state.taskId = '';
+        state.summary = defaultSummary();
+        state.overallCoverage = null;
+        state.diffMatrix = [];
+        state.currentFile = defaultCurrentFile();
+        return;
+      }
+      
+      // 应用缓存数据到当前显示状态
+      state.taskId = cached.taskId || '';
+      state.summary = { ...defaultSummary(), ...cached.summary };
+      state.overallCoverage = cached.overallCoverage || null;
+      state.diffMatrix = Array.isArray(cached.diffMatrix) ? [...cached.diffMatrix] : [];
+      state.currentFile = defaultCurrentFile();
+    },
+    // 批量刷新相关 mutations
+    setBatchRefreshing(state, flag) {
+      state.batchRefreshing = flag;
+    },
+    setBatchRefreshProgress(state, progress) {
+      state.batchRefreshProgress = {
+        ...state.batchRefreshProgress,
+        ...progress,
+      };
+    },
+    addBatchError(state, error) {
+      state.batchRefreshProgress.errors.push(error);
+    },
+    clearBatchErrors(state) {
+      state.batchRefreshProgress.errors = [];
+    },
+    setExportProgress(state, progress) {
+      state.exportProgress = {
+        ...state.exportProgress,
+        ...progress,
+      };
+    },
+    resetExportProgress(state) {
+      state.exportProgress = {
+        stage: '',
+        message: '',
+        current: 0,
+        total: 0,
+        percentage: 0,
+      };
+    },
+    // 异步导出相关 mutations
+    setAsyncExportTasks(state, tasks) {
+      state.asyncExportTasks = Array.isArray(tasks) ? [...tasks] : [];
+    },
+    setLoadingAsyncExportTasks(state, flag) {
+      state.loadingAsyncExportTasks = flag;
+    },
+    setCurrentAsyncTask(state, task) {
+      state.currentAsyncTask = task;
+    },
+    updateAsyncTaskStatus(state, { taskId, status }) {
+      const taskIndex = state.asyncExportTasks.findIndex(task => task.taskId === taskId);
+      if (taskIndex !== -1) {
+        state.asyncExportTasks.splice(taskIndex, 1, status);
+      }
+      // 如果是当前任务，也要更新
+      if (state.currentAsyncTask && state.currentAsyncTask.taskId === taskId) {
+        state.currentAsyncTask = status;
+      }
+    },
+    removeAsyncTask(state, taskId) {
+      state.asyncExportTasks = state.asyncExportTasks.filter(task => task.taskId !== taskId);
+      if (state.currentAsyncTask && state.currentAsyncTask.taskId === taskId) {
+        state.currentAsyncTask = null;
+      }
+    },
+    setPollingInterval(state, interval) {
+      if (state.pollingInterval) {
+        clearInterval(state.pollingInterval);
+      }
+      state.pollingInterval = interval;
+    },
+  },
+  getters: {
+    filteredDiffMatrix(state) {
+      if (!Array.isArray(state.diffMatrix)) {
+        return [];
+      }
+      const filters = state.matrixFilters || defaultMatrixFilters();
+      const statuses = Array.isArray(filters.statuses) ? filters.statuses : [];
+      const coverageRange = Array.isArray(filters.coverageRange)
+        ? filters.coverageRange
+        : [0, 1];
+      const includeEmpty =
+        filters.includeEmptyCoverage === undefined
+          ? true
+          : !!filters.includeEmptyCoverage;
+      const fileExtensions = Array.isArray(filters.fileExtensions) ? filters.fileExtensions : [];
+      const excludeTestFiles = filters.excludeTestFiles || false;
+      const excludePatterns = Array.isArray(filters.excludePatterns) ? filters.excludePatterns : [];
+      const [min = 0, max = 1] = coverageRange;
+      return state.diffMatrix.filter((item) => {
+        const statusMatches = !statuses.length || statuses.includes(item.status);
+        if (!statusMatches) {
+          return false;
+        }
+        
+        // 排除测试文件
+        if (excludeTestFiles && isTestFile(item.filePath)) {
+          return false;
+        }
+        
+        // 排除自定义模式匹配的文件
+        if (matchesExcludePatterns(item.filePath, excludePatterns)) {
+          return false;
+        }
+        
+        // 文件扩展名筛选
+        if (fileExtensions.length > 0) {
+          const fileExt = item.filePath.split('.').pop();
+          const normalizedExt = fileExt ? `.${fileExt.toLowerCase()}` : '';
+          if (!fileExtensions.includes(normalizedExt)) {
+            return false;
+          }
+        }
+        
+        const value = item.coverage;
+        if (value === undefined || value === null || value === '') {
+          return includeEmpty;
+        }
+        const numeric = Number(value);
+        if (Number.isNaN(numeric)) {
+          return includeEmpty;
+        }
+        const normalizedMin = Number(min);
+        const normalizedMax = Number(max);
+        const lower = Number.isNaN(normalizedMin) ? 0 : normalizedMin;
+        const upper = Number.isNaN(normalizedMax) ? 1 : normalizedMax;
+        return numeric >= lower && numeric <= upper;
+      });
+    },
+    availableFileExtensions(state) {
+      const extensions = new Set();
+      state.diffMatrix.forEach(item => {
+        if (item.filePath && typeof item.filePath === 'string') {
+          const parts = item.filePath.split('.');
+          if (parts.length > 1) {
+            const ext = parts.pop().toLowerCase();
+            // 过滤异常长的扩展名和无意义扩展名
+            if (ext && ext.length <= 10 && ext.length >= 1) {
+              extensions.add(`.${ext}`);
+            }
+          }
+        }
+      });
+      return Array.from(extensions).sort();
+    },
+  },
+  actions: {
+    async fetchRecentTasks({ commit }) {
+      commit('setLoadingTasks', true);
+      try {
+        const tasks = await fetchRecentTasksRequest();
+        commit('setAvailableTasks', tasks);
+        return tasks;
+      } finally {
+        commit('setLoadingTasks', false);
+      }
+    },
+    async loadProfiles({ commit, dispatch }, options = {}) {
+      const { bootstrapDefaults = true } = options || {};
+      const stored = readProfilesFromStorage();
+      commit('setRepoProfiles', stored.profiles);
+      commit('setProfileBundleMeta', stored.meta);
+      if (!stored.profiles.length) {
+        commit('setSelectedProfileIds', []);
+        if (bootstrapDefaults) {
+          try {
+            const defaults = await dispatch('syncDefaultProfiles');
+            return defaults;
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.warn('[profiles] failed to sync defaults', error);
+          }
+        }
+      }
+      return stored.profiles;
+    },
+    async syncDefaultProfiles({ commit }) {
+      const bundle = await fetchRepoProfilesBundle();
+      const normalized = normalizeProfiles(bundle?.profiles || [], bundle?.version || '');
+      if (!normalized.length) {
+        return [];
+      }
+      const meta = buildBundleMeta(bundle);
+      commit('setRepoProfiles', normalized);
+      commit('setProfileBundleMeta', meta);
+      commit('setSelectedProfileIds', normalized.map((profile) => profile.id));
+      writeProfilesToStorage(normalized, meta);
+      return normalized;
+    },
+    async importProfiles({ state, commit }, payload) {
+      const replaceExisting = !!(payload && payload.replaceExisting);
+      const bundleWrapper = payload && payload.bundle ? payload.bundle : payload;
+      const bundle = normalizeBundleInput(bundleWrapper);
+      if (!bundle.profiles.length) {
+        throw new Error('配置文件为空或格式无效');
+      }
+      await validateRepoProfiles({
+        version: bundle.meta.version,
+        generatedAt: bundle.meta.generatedAt,
+        profiles: bundle.profiles,
+      });
+      const normalized = normalizeProfiles(bundle.profiles, bundle.meta.version);
+      const merged = replaceExisting ? normalized : mergeProfiles(state.repoProfiles, normalized);
+      const nextMeta = replaceExisting
+        ? bundle.meta
+        : mergeBundleMeta(state.profileBundleMeta, bundle.meta);
+      commit('setRepoProfiles', merged);
+      commit('setProfileBundleMeta', nextMeta);
+      writeProfilesToStorage(merged, nextMeta);
+      return merged;
+    },
+    removeProfiles({ state, commit }, ids = []) {
+      if (!Array.isArray(ids) || !ids.length) {
+        return state.repoProfiles;
+      }
+      const remain = state.repoProfiles.filter((profile) => !ids.includes(profile.id));
+      commit('setRepoProfiles', remain);
+      writeProfilesToStorage(remain, state.profileBundleMeta);
+      const nextSelection = state.selectedProfileIds.filter((id) => remain.find((item) => item.id === id));
+      commit('setSelectedProfileIds', nextSelection);
+      return remain;
+    },
+    exportProfiles({ state }) {
+      if (!state.repoProfiles.length) {
+        throw new Error('暂无配置可导出');
+      }
+      const meta = state.profileBundleMeta || DEFAULT_BUNDLE_META();
+      return {
+        version: meta.version || `local-${Date.now()}`,
+        generatedAt: meta.generatedAt || new Date().toISOString(),
+        profiles: state.repoProfiles,
+      };
+    },
+    async loadSnapshots({ commit, dispatch }, { autoApply = false, preferredRepoId } = {}) {
+      console.log('[🔍 DEBUG] loadSnapshots called:', { autoApply, preferredRepoId });
+      commit('setLoadingSnapshots', true);
+      try {
+        const snapshots = await fetchScanCacheRequest();
+        console.log('[🔍 DEBUG] loadSnapshots API response:', { 
+          snapshotCount: snapshots?.length || 0,
+          snapshots: snapshots?.map(s => ({ 
+            taskId: s.taskId, 
+            repoId: s.repoId, 
+            hasResponse: !!s.response,
+            summaryFiles: s.response?.summary?.totalFiles
+          }))
+        });
+        commit('setCachedSnapshots', snapshots || []);
+        
+        if (
+          autoApply
+          && Array.isArray(snapshots)
+          && snapshots.length > 0
+        ) {
+          const target = snapshots.find((item) => resolveSnapshotKey(item) === preferredRepoId)
+            || snapshots[0];
+          console.log('[🔍 DEBUG] loadSnapshots autoApplying target:', { 
+            target: resolveSnapshotKey(target),
+            preferredRepoId,
+            isFirstSnapshot: !preferredRepoId
+          });
+          
+          await dispatch('applySnapshot', target);
+          
+          // 新增：应用快照后，调用applyRepoData确保UI更新
+          const key = resolveSnapshotKey(target);
+          console.log('[🔍 DEBUG] loadSnapshots applying repo data:', { key, shouldApply: !!key });
+          if (key) {
+            commit('setCurrentRepoId', key);
+            commit('applyRepoData', key);
+            console.log('[🔍 DEBUG] loadSnapshots repo data applied, current state:', {
+              currentRepoId: key,
+              taskId: target.response?.taskId,
+              hasDiffMatrix: target.response?.diffMatrix?.length > 0
+            });
+          }
+        } else {
+          console.log('[🔍 DEBUG] loadSnapshots skipped autoApply:', { 
+            autoApply, 
+            hasSnapshots: Array.isArray(snapshots), 
+            snapshotCount: snapshots?.length 
+          });
+        }
+        return snapshots;
+      } finally {
+        commit('setLoadingSnapshots', false);
+        console.log('[🔍 DEBUG] loadSnapshots completed');
+      }
+    },
+    async applySnapshot({ commit, dispatch }, snapshot) {
+      console.log('[🔍 DEBUG] applySnapshot called:', { 
+        hasSnapshot: !!snapshot,
+        hasResponse: !!snapshot?.response,
+        taskId: snapshot?.taskId,
+        repoId: snapshot?.repoId,
+        resolvedKey: resolveSnapshotKey(snapshot)
+      });
+      
+      if (!snapshot || !snapshot.response) {
+        console.log('[🔍 DEBUG] applySnapshot: clearing state due to invalid snapshot');
+        commit('setActiveRepoId', '');
+        commit('setTaskId', '');
+        commit('setSummary', defaultSummary());
+        commit('setOverallCoverage', null);
+        commit('setDiffMatrix', []);
+        commit('setCurrentFile', {});
+        return null;
+      }
+      const key = resolveSnapshotKey(snapshot);
+      console.log('[🔍 DEBUG] applySnapshot: processing snapshot with key:', key);
+      
+      commit('setActiveRepoId', key);
+      const response = snapshot.response;
+      commit('setTaskId', response?.taskId || snapshot.taskId || '');
+      commit(
+        'setOverallCoverage',
+        response?.summary?.overallCoverage ?? response?.overallCoverage ?? null,
+      );
+      commit('setSummary', response?.summary || {});
+      commit('setDiffMatrix', response?.diffMatrix || []);
+      commit('setCurrentFile', {});
+      
+      console.log('[🔍 DEBUG] applySnapshot: state updated:', {
+        taskId: response?.taskId || snapshot.taskId,
+        hasSummary: !!response?.summary,
+        summaryFiles: response?.summary?.totalFiles,
+        hasDiffMatrix: !!response?.diffMatrix,
+        diffMatrixLength: response?.diffMatrix?.length
+      });
+      
+      // 新增：同时更新repoDataCache，确保缓存数据同步
+      await dispatch('applySnapshotToCache', { repoId: key, snapshot });
+      console.log('[🔍 DEBUG] applySnapshot: cache updated, returning snapshot');
+      
+      return snapshot;
+    },
+    async clearSnapshots({ commit }) {
+      await clearScanCacheRequest();
+      commit('setCachedSnapshots', []);
+      commit('setActiveRepoId', '');
+      commit('setTaskId', '');
+      commit('setSummary', defaultSummary());
+      commit('setOverallCoverage', null);
+      commit('setDiffMatrix', []);
+      commit('setCurrentFile', {});
+    },
+    async scanFull({ state, commit }, payload = {}) {
+      commit('setLoadingMatrix', true);
+      try {
+        const currentTaskId = payload.taskId || state.taskId || createTaskId();
+        const response = await scanFullRequest({
+          ...payload,
+          taskId: currentTaskId,
+        });
+        commit('setTaskId', response?.taskId || currentTaskId || '');
+        commit('setSummary', response?.summary || {});
+        commit(
+          'setOverallCoverage',
+          response?.summary?.overallCoverage ?? response?.overallCoverage ?? null,
+        );
+        commit('setDiffMatrix', response?.diffMatrix || []);
+        commit('setCurrentFile', {});
+        return response;
+      } finally {
+        commit('setLoadingMatrix', false);
+      }
+    },
+    async scanProfiles({ state, dispatch }, { profileIds }) {
+      const targets = Array.isArray(profileIds) && profileIds.length
+        ? state.repoProfiles.filter((profile) => profileIds.includes(profile.id))
+        : [];
+      if (!targets.length) {
+        throw new Error('请选择需要刷新的仓库配置');
+      }
+      for (const profile of targets) {
+        await dispatch('scanFull', {
+          taskId: createTaskId(),
+          repoId: profile.id,
+          repoName: profile.name,
+          presetName: profile.presetName,
+          persistResult: true,
+          oracle: profile.oracle,
+          gauss: profile.gauss,
+        });
+      }
+      await dispatch('loadSnapshots', {
+        autoApply: true,
+        preferredRepoId: targets[targets.length - 1]?.id,
+      });
+    },
+    async fetchDetail({ state, commit }, { filePath, taskId } = {}) {
+      const targetFilePath = filePath || state.currentFile.filePath;
+      if (!targetFilePath) {
+        throw new Error('缺少文件路径');
+      }
+      const effectiveTaskId = taskId || state.taskId;
+      if (!effectiveTaskId) {
+        throw new Error('缺少 taskId，请先执行扫描');
+      }
+      commit('setLoadingDetail', true);
+      try {
+        console.log('[DiffStore] fetchDetail called:', {
+          taskId: effectiveTaskId,
+          filePath: targetFilePath
+        });
+        
+        const detail = await fetchDetailRequest({
+          taskId: effectiveTaskId,
+          filePath: targetFilePath,
+        });
+        
+        console.log('[DiffStore] fetchDetail response:', {
+          filePath: detail.filePath,
+          hasOracleDiff: !!detail.oracleDiff,
+          hasGaussDiff: !!detail.gaussDiff,
+          hasMigrationDiff: !!detail.migrationDiff,
+          oracleBeforeLength: detail.oracleDiff?.before?.length || 0,
+          oracleAfterLength: detail.oracleDiff?.after?.length || 0,
+          gaussBeforeLength: detail.gaussDiff?.before?.length || 0,
+          gaussAfterLength: detail.gaussDiff?.after?.length || 0,
+          migrationDiffLength: detail.migrationDiff?.length || 0
+        });
+        
+        commit('setCurrentFile', detail);
+        return detail;
+      } finally {
+        commit('setLoadingDetail', false);
+      }
+    },
+    async generateMigration({ state, commit, dispatch }, { filePath, options } = {}) {
+      const targetFilePath = filePath || state.currentFile.filePath;
+      if (!targetFilePath) {
+        throw new Error('请选择需要迁移的文件');
+      }
+      if (!state.taskId) {
+        throw new Error('缺少 taskId，请先执行扫描');
+      }
+      commit('setMigrating', true);
+      try {
+        const result = await generateMigrationRequest({
+          taskId: state.taskId,
+          filePath: targetFilePath,
+          options: options || {},
+        });
+        const nextTaskId = result?.data?.taskId;
+        if (nextTaskId && nextTaskId !== state.taskId) {
+          commit('setTaskId', nextTaskId);
+        }
+        await dispatch('fetchDetail', {
+          filePath: targetFilePath,
+          taskId: nextTaskId || state.taskId,
+        });
+        return result;
+      } finally {
+        commit('setMigrating', false);
+      }
+    },
+    async applyMigration({ state, commit, dispatch }, { filePath } = {}) {
+      const targetFilePath = filePath || state.currentFile.filePath;
+      if (!targetFilePath) {
+        throw new Error('请选择需要应用迁移的文件');
+      }
+      if (!state.taskId) {
+        throw new Error('缺少 taskId，请先执行扫描');
+      }
+      commit('setMigrating', true);
+      try {
+        const result = await applyMigrationRequest({
+          taskId: state.taskId,
+          filePath: targetFilePath,
+        });
+        const nextTaskId = result?.data?.taskId;
+        if (nextTaskId && nextTaskId !== state.taskId) {
+          commit('setTaskId', nextTaskId);
+        }
+        await dispatch('fetchDetail', {
+          filePath: targetFilePath,
+          taskId: nextTaskId || state.taskId,
+        });
+        return result;
+      } finally {
+        commit('setMigrating', false);
+      }
+    },
+    async revertMigration({ state, commit, dispatch }, { filePath } = {}) {
+      const targetFilePath = filePath || state.currentFile.filePath;
+      if (!targetFilePath) {
+        throw new Error('请选择需要撤销迁移的文件');
+      }
+      if (!state.taskId) {
+        throw new Error('缺少 taskId，请先执行扫描');
+      }
+      commit('setMigrating', true);
+      try {
+        const result = await revertMigrationRequest({
+          taskId: state.taskId,
+          filePath: targetFilePath,
+        });
+        const nextTaskId = result?.data?.taskId;
+        if (nextTaskId && nextTaskId !== state.taskId) {
+          commit('setTaskId', nextTaskId);
+        }
+        await dispatch('fetchDetail', {
+          filePath: targetFilePath,
+          taskId: nextTaskId || state.taskId,
+        });
+        return result;
+      } finally {
+        commit('setMigrating', false);
+      }
+    },
+    async exportMultiReport({ commit }, { repos, filters, format = 'csv' } = {}) {
+      if (!Array.isArray(repos) || repos.length === 0) {
+        throw new Error('请至少选择一个任务');
+      }
+      
+      // 验证每个仓库选择的配置
+      const invalidRepos = repos.filter(repo => !repo.taskId && !repo.presetName);
+      if (invalidRepos.length > 0) {
+        console.error('无效的仓库配置:', invalidRepos);
+        throw new Error(`存在无效的仓库配置，缺少 taskId 和 presetName`);
+      }
+      
+      console.log('导出多仓库报告:', { repos, filters, format });
+      
+      const exportFilters = buildExportFilters(filters || {});
+      commit('setExportingReport', true);
+      try {
+        const requestPayload = {
+          repos,
+          statuses: exportFilters.statuses,
+          coverageMin: exportFilters.coverageRange[0],
+          coverageMax: exportFilters.coverageRange[1],
+          includeEmptyCoverage: exportFilters.includeEmptyCoverage,
+          fileExtensions: exportFilters.fileExtensions,
+          excludeTestFiles: exportFilters.excludeTestFiles,
+          excludePatterns: exportFilters.excludePatterns,
+          includeCommitInfo: exportFilters.includeCommitInfo,
+          authorFilters: exportFilters.authorFilters,
+          authorTypeFilter: exportFilters.authorTypeFilter,
+          timeFrom: exportFilters.timeFrom,
+          timeTo: exportFilters.timeTo,
+          format,
+        };
+        
+        console.log('发送导出请求:', requestPayload);
+        const response = await exportMultiReportRequest(requestPayload);
+        
+        const filename = resolveFilenameFromResponse(
+          response,
+          `scan-report-multi-${Date.now()}.${format}`,
+        );
+        downloadBlob(response.data, filename);
+        console.log('导出成功:', filename);
+        return filename;
+      } catch (error) {
+        console.error('导出失败:', error);
+        
+        // 提供更友好的错误信息
+        let errorMessage = '导出失败';
+        if (error.response) {
+          if (error.response.status === 400) {
+            const errorText = await error.response.text();
+            console.error('400错误详情:', errorText);
+            
+            if (errorText.includes('Unknown scan preset')) {
+              errorMessage = '找不到预设配置，请确保配置已正确导入或使用默认配置';
+            } else if (errorText.includes('找不到 taskId')) {
+              errorMessage = '找不到对应的扫描任务，请先执行扫描后再导出';
+            } else if (errorText.includes('暂无扫描记录')) {
+              errorMessage = '暂无扫描记录，请先执行扫描';
+            } else {
+              errorMessage = `请求参数错误: ${errorText}`;
+            }
+          } else if (error.response.status === 500) {
+            errorMessage = '服务器内部错误，请稍后重试';
+          } else {
+            errorMessage = `导出失败 (${error.response.status}): ${error.message || '未知错误'}`;
+          }
+        } else if (error.message) {
+          errorMessage = error.message;
+        }
+        
+        throw new Error(errorMessage);
+      } finally {
+        commit('setExportingReport', false);
+      }
+    },
+    async fetchCommitHistory({ state, commit }, { filePath, taskId } = {}) {
+      const targetFilePath = filePath || state.currentFile.filePath;
+      if (!targetFilePath) {
+        throw new Error('缺少文件路径');
+      }
+      const effectiveTaskId = taskId || state.taskId;
+      if (!effectiveTaskId) {
+        throw new Error('缺少 taskId，请先执行扫描');
+      }
+      commit('setLoadingCommitHistory', true);
+      try {
+        const response = await commitApi.getFileCommitHistory({
+          taskId: effectiveTaskId,
+          filePath: targetFilePath,
+        });
+        const commitHistory = commitApi.parseCommitHistory(response.data);
+        commit('setCommitHistory', commitHistory);
+        return commitHistory;
+      } catch (error) {
+        console.warn('获取提交历史失败:', error);
+        // 失败时设置空的提交历史
+        const emptyCommitHistory = defaultCommitHistory();
+        emptyCommitHistory.filePath = targetFilePath;
+        commit('setCommitHistory', emptyCommitHistory);
+        return emptyCommitHistory;
+      } finally {
+        commit('setLoadingCommitHistory', false);
+      }
+    },
+
+    // ========== 新增的简化仓库管理 actions ==========
+
+    /**
+     * 初始化仓库管理：加载可用仓库列表和缓存数据
+     */
+    async initializeRepoManagement({ commit, dispatch, state }) {
+      try {
+        // 1. 加载默认仓库配置
+        const profiles = await dispatch('syncDefaultProfiles');
+        let repos = profiles.map(profile => ({
+          id: profile.id,
+          name: profile.name || profile.id,
+          presetName: profile.presetName,
+          description: `${profile.oracle?.repoPath} → ${profile.gauss?.repoPath}`,
+        }));
+        commit('setAvailableRepos', repos);
+
+        // 2. 加载缓存快照并更新仓库数据缓存
+        await dispatch('syncCacheToRepoData');
+
+        // 3. 合并缓存中的仓库到可用仓库列表
+        repos = await dispatch('mergeCacheRepos', repos);
+        commit('setAvailableRepos', repos);
+
+        // 4. 智能选择仓库：优先级：当前仓库 > URL参数 > 有缓存的仓库 > 第一个仓库
+        let targetRepoId = null;
+        
+        // 4.1 优先保持当前仓库选择（如果存在且有数据）
+        if (state.currentRepoId && state.repoDataCache[state.currentRepoId]) {
+          targetRepoId = state.currentRepoId;
+          console.log('[initializeRepoManagement] Keeping current repo:', targetRepoId);
+        }
+        
+        // 4.2 尝试从URL参数获取仓库ID（由DashboardPage处理）
+        // 这里不处理，让DashboardPage的watch处理
+        
+        // 4.3 选择有缓存的第一个仓库
+        if (!targetRepoId && repos.length > 0) {
+          const cachedRepo = repos.find(repo => state.repoDataCache[repo.id]);
+          if (cachedRepo) {
+            targetRepoId = cachedRepo.id;
+            console.log('[initializeRepoManagement] Using cached repo:', targetRepoId);
+          }
+        }
+        
+        // 4.4 最后才选择第一个仓库
+        if (!targetRepoId && repos.length > 0) {
+          targetRepoId = repos[0].id;
+          console.log('[initializeRepoManagement] Using first repo as fallback:', targetRepoId);
+        }
+        
+        // 5. 应用选中的仓库数据
+        if (targetRepoId) {
+          commit('setCurrentRepoId', targetRepoId);
+          await dispatch('applyRepoData', targetRepoId);
+        }
+
+        return repos;
+      } catch (error) {
+        console.error('初始化仓库管理失败:', error);
+        throw error;
+      }
+    },
+
+    /**
+     * 核心方法：切换到指定仓库
+     */
+    async switchToRepo({ commit, dispatch, state }, repoId) {
+      if (!repoId) {
+        throw new Error('仓库ID不能为空');
+      }
+
+      commit('setCurrentRepoId', repoId);
+
+      try {
+        // 1. 检查本地缓存
+        const cachedData = state.repoDataCache[repoId];
+        if (cachedData) {
+          console.log(`使用缓存数据: ${repoId}`);
+          commit('applyRepoData', repoId);
+          return cachedData;
+        }
+
+        // 2. 检查后端缓存快照
+        const snapshot = await dispatch('findSnapshotForRepo', repoId);
+        if (snapshot) {
+          console.log(`使用后端缓存: ${repoId}`);
+          await dispatch('applySnapshotToCache', { repoId, snapshot });
+          commit('applyRepoData', repoId);
+          return state.repoDataCache[repoId];
+        }
+
+        // 3. 无缓存：自动扫描
+        console.log(`无缓存，开始扫描: ${repoId}`);
+        await dispatch('scanAndCacheRepo', repoId);
+        commit('applyRepoData', repoId);
+        return state.repoDataCache[repoId];
+
+      } catch (error) {
+        console.error(`切换仓库失败: ${repoId}`, error);
+        throw error;
+      }
+    },
+
+    /**
+     * 强制刷新当前仓库
+     */
+    async forceRefreshCurrentRepo({ commit, dispatch, state }) {
+      if (!state.currentRepoId) {
+        throw new Error('没有选中的仓库');
+      }
+      await dispatch('scanAndCacheRepo', state.currentRepoId);
+      // 添加这行来触发UI更新
+      commit('applyRepoData', state.currentRepoId);
+      return state.repoDataCache[state.currentRepoId];
+    },
+
+    /**
+     * 强制刷新所有仓库
+     */
+    async forceRefreshAllRepos({ commit, dispatch, state }) {
+      if (!state.availableRepos.length) {
+        throw new Error('没有可用的仓库配置');
+      }
+
+      commit('setBatchRefreshing', true);
+      commit('clearBatchErrors');
+      
+      const repos = [...state.availableRepos];
+      const success = [];
+      const errors = [];
+
+      try {
+        // 初始化进度
+        commit('setBatchRefreshProgress', {
+          current: 0,
+          total: repos.length,
+          currentRepo: '',
+          errors: [],
+        });
+
+        // 串行刷新每个仓库
+        for (let i = 0; i < repos.length; i++) {
+          const repo = repos[i];
+          
+          // 更新进度
+          commit('setBatchRefreshProgress', {
+            current: i,
+            total: repos.length,
+            currentRepo: repo.name,
+            errors: state.batchRefreshProgress.errors,
+          });
+
+          try {
+            await dispatch('scanAndCacheRepo', repo.id);
+            success.push(repo);
+            console.log(`仓库刷新成功: ${repo.name} (${i + 1}/${repos.length})`);
+          } catch (error) {
+            const errorInfo = {
+              repo: repo.name,
+              repoId: repo.id,
+              error: error.message || error.toString(),
+            };
+            errors.push(errorInfo);
+            commit('addBatchError', errorInfo);
+            console.error(`仓库刷新失败: ${repo.name}`, error);
+          }
+        }
+
+        // 完成进度
+        commit('setBatchRefreshProgress', {
+          current: repos.length,
+          total: repos.length,
+          currentRepo: '',
+          errors: state.batchRefreshProgress.errors,
+        });
+
+        // 应用最后一个成功的仓库数据（如果有的话）
+        if (success.length > 0) {
+          const lastSuccessRepo = success[success.length - 1];
+          commit('setCurrentRepoId', lastSuccessRepo.id);
+          commit('applyRepoData', lastSuccessRepo.id);
+        }
+
+        return {
+          success,
+          errors,
+          total: repos.length,
+        };
+
+      } finally {
+        commit('setBatchRefreshing', false);
+      }
+    },
+
+    /**
+     * 合并缓存中的仓库到可用仓库列表
+     */
+    async mergeCacheRepos({ commit, dispatch, state }, existingRepos) {
+      try {
+        // 获取所有缓存快照
+        const snapshots = await fetchScanCacheRequest();
+        if (!Array.isArray(snapshots)) {
+          return existingRepos;
+        }
+
+        console.log('[mergeCacheRepos] 开始合并，现有仓库:', existingRepos.map(r => ({ id: r.id, name: r.name, presetName: r.presetName })));
+        console.log('[mergeCacheRepos] 缓存快照:', snapshots.map(s => ({ 
+          taskId: s.taskId, 
+          repoId: s.repoId, 
+          snapshotPresetName: s.response?.presetName,
+          hasResponse: !!s.response,
+          summaryFiles: s.response?.summary?.totalFiles
+        })));
+
+        // 创建现有仓库ID的Set用于快速查找
+        const existingRepoIds = new Set(existingRepos.map(repo => repo.id));
+        const mergedRepos = [...existingRepos];
+
+        for (const snapshot of snapshots) {
+          const repoId = snapshot.repoId || snapshot.taskId || snapshot.response?.taskId;
+          
+          // 首先尝试匹配现有仓库
+          let matchedRepo = null;
+          if (repoId) {
+            matchedRepo = existingRepos.find(repo => 
+              repo.id === repoId ||
+              repo.presetName === snapshot.response?.presetName ||
+              repo.id === snapshot.response?.presetName
+            );
+          }
+          
+          // 如果匹配到现有仓库，更新其缓存状态，但不创建新条目
+          if (matchedRepo) {
+            console.log(`[mergeCacheRepos] ✅ 匹配到现有仓库: ${matchedRepo.name} (${matchedRepo.id})，跳过创建缓存仓库`);
+            continue;
+          }
+          
+          // 跳过已存在的仓库
+          if (repoId && !existingRepoIds.has(repoId)) {
+            let repoName = repoId; // 默认使用repoId作为名称
+            
+            // 尝试从snapshot中提取更好的名称
+            if (snapshot.response?.presetName) {
+              repoName = snapshot.response.presetName;
+            } else if (snapshot.response?.source && snapshot.response?.target) {
+              const sourceName = snapshot.response.source.split('/').pop();
+              const targetName = snapshot.response.target.split('/').pop();
+              repoName = `${sourceName} → ${targetName}`;
+            }
+            
+            const cacheRepo = {
+              id: repoId,
+              name: repoName,
+              presetName: snapshot.response?.presetName || '',
+              description: `缓存仓库 - ${new Date(snapshot.cachedAt || Date.now()).toLocaleString()}`,
+              isFromCache: true // 标记这是来自缓存的仓库
+            };
+            
+            mergedRepos.push(cacheRepo);
+            console.log(`[mergeCacheRepos] ➕ 添加新的缓存仓库: ${repoName} (${repoId})`);
+          } else if (repoId) {
+            console.log(`[mergeCacheRepos] ⏭️ 仓库已存在，跳过: ${repoId}`);
+          }
+        }
+
+        console.log('[mergeCacheRepos] 合并完成，最终仓库列表:', mergedRepos.map(r => ({ id: r.id, name: r.name, isFromCache: r.isFromCache })));
+        return mergedRepos;
+      } catch (error) {
+        console.warn('合并缓存仓库失败:', error);
+        return existingRepos;
+      }
+    },
+
+    /**
+     * 同步后端缓存到本地仓库数据缓存
+     */
+    async syncCacheToRepoData({ commit, dispatch, state }) {
+      try {
+        const snapshots = await fetchScanCacheRequest();
+        if (!Array.isArray(snapshots)) return;
+
+        console.log('[syncCacheToRepoData] 开始同步缓存，可用仓库:', state.availableRepos.map(r => ({ id: r.id, name: r.name, presetName: r.presetName })));
+
+        for (const snapshot of snapshots) {
+          let repoId = snapshot.repoId || snapshot.taskId || snapshot.response?.taskId;
+          let matchedRepo = null;
+          
+          // 尝试匹配仓库配置，获取正确的repoId
+          if (!snapshot.repoId && snapshot.response?.taskId) {
+            // 多种匹配策略，按优先级排序
+            matchedRepo = state.availableRepos.find(repo => 
+              repo.presetName === snapshot.response.presetName ||
+              repo.id === snapshot.response.taskId ||
+              repo.id === snapshot.response?.presetName ||
+              (snapshot.response.source && snapshot.response.target && 
+               repo.oracle?.repoPath === snapshot.response.source &&
+               repo.gauss?.repoPath === snapshot.response.target)
+            );
+            
+            if (matchedRepo) {
+              repoId = matchedRepo.id;
+              console.log(`[syncCacheToRepoData] ✅ 匹配到仓库: ${matchedRepo.name} (${repoId})`, {
+                snapshotTaskId: snapshot.response?.taskId,
+                snapshotPresetName: snapshot.response?.presetName,
+                matchedRepoId: matchedRepo.id,
+                matchedRepoName: matchedRepo.name,
+                matchedRepoPresetName: matchedRepo.presetName
+              });
+            } else {
+              // 如果没有匹配到仓库，尝试从response中提取信息
+              if (snapshot.response.source && snapshot.response.target) {
+                const sourceName = snapshot.response.source.split('/').pop();
+                const targetName = snapshot.response.target.split('/').pop();
+                repoId = `${sourceName} → ${targetName}`;
+                console.log(`[syncCacheToRepoData] ⚠️ 未匹配到仓库，使用路径作为repoId: ${repoId}`, {
+                  snapshotTaskId: snapshot.response?.taskId,
+                  snapshotPresetName: snapshot.response?.presetName,
+                  generatedRepoId: repoId
+                });
+              }
+            }
+          }
+          
+          if (repoId && snapshot.response) {
+            await dispatch('applySnapshotToCache', { repoId, snapshot });
+            console.log(`[syncCacheToRepoData] 📦 同步缓存完成: ${repoId}`, {
+              hasRepoId: !!snapshot.repoId,
+              taskId: snapshot.taskId,
+              presetName: snapshot.response?.presetName,
+              matchedRepoName: matchedRepo?.name || 'none'
+            });
+          }
+        }
+      } catch (error) {
+        console.warn('同步缓存失败:', error);
+      }
+    },
+
+    /**
+     * 查找指定仓库的缓存快照
+     */
+    async findSnapshotForRepo({ state }, repoId) {
+      try {
+        const snapshots = await fetchScanCacheRequest();
+        return snapshots.find(snapshot => 
+          snapshot.repoId === repoId || snapshot.taskId === repoId || (!snapshot.repoId && snapshot.response?.taskId === repoId)
+        );
+      } catch (error) {
+        console.warn('查找快照失败:', error);
+        return null;
+      }
+    },
+
+    /**
+     * 将快照应用到本地缓存
+     */
+    async applySnapshotToCache({ commit }, { repoId, snapshot }) {
+      const response = snapshot.response;
+      const cacheData = {
+        taskId: response.taskId || snapshot.taskId,
+        summary: response.summary || {},
+        diffMatrix: response.diffMatrix || [],
+        overallCoverage: response.overallCoverage || response.summary?.overallCoverage,
+      };
+      commit('setRepoDataCache', { repoId, data: cacheData });
+    },
+
+    /**
+     * 扫描指定仓库并缓存结果
+     */
+    async scanAndCacheRepo({ commit, dispatch, state }, repoId) {
+      commit('setScanning', true);
+      try {
+        // 获取仓库配置
+        const repo = state.availableRepos.find(r => r.id === repoId);
+        if (!repo) {
+          throw new Error(`找不到仓库配置: ${repoId}`);
+        }
+
+        // 执行扫描，确保传递repoId和repoName
+        const response = await scanFullRequest({
+          presetName: repo.presetName || repoId,
+          persistResult: true,
+          taskId: createTaskId(),
+          repoId: repo.id,      // 新增：传递仓库ID
+          repoName: repo.name,  // 新增：传递仓库名称
+        });
+
+        // 缓存结果
+        const cacheData = {
+          taskId: response.taskId,
+          summary: response.summary || {},
+          diffMatrix: response.diffMatrix || [],
+          overallCoverage: response.overallCoverage || response.summary?.overallCoverage,
+        };
+        commit('setRepoDataCache', { repoId, data: cacheData });
+        commit('setLastScanTime', new Date().toISOString());
+
+        return response;
+      } finally {
+        commit('setScanning', false);
+      }
+    },
+
+    /**
+     * 应用仓库数据到当前显示状态
+     */
+    applyRepoData({ commit, state }, repoId) {
+      commit('applyRepoData', repoId);
+      
+      // 同步更新兼容性字段
+      const cached = state.repoDataCache[repoId];
+      if (cached) {
+        commit('setActiveRepoId', repoId);
+        commit('setTaskId', cached.taskId);
+      }
+    },
+
+    /**
+     * 清空所有仓库数据缓存
+     */
+    clearAllRepoCache({ commit }) {
+      commit('clearRepoDataCache');
+      commit('setCurrentRepoId', '');
+      commit('setActiveRepoId', '');
+      commit('setTaskId', '');
+      commit('setSummary', defaultSummary());
+      commit('setOverallCoverage', null);
+      commit('setDiffMatrix', []);
+      commit('setCurrentFile', defaultCurrentFile());
+    },
+
+    /**
+     * 获取仓库缓存状态信息
+     */
+    getRepoCacheStatus({ state }) {
+      return state.availableRepos.map(repo => ({
+        id: repo.id,
+        name: repo.name,
+        hasCache: !!state.repoDataCache[repo.id],
+        cachedAt: state.repoDataCache[repo.id]?.cachedAt,
+        isCurrent: repo.id === state.currentRepoId,
+      }));
+    },
+
+    // ========== 异步导出相关 actions ==========
+
+    /**
+     * 创建异步导出任务
+     */
+    async createAsyncExportTask({ commit, dispatch }, { repos, filters, format = 'csv' }) {
+      if (!Array.isArray(repos) || repos.length === 0) {
+        throw new Error('请至少选择一个任务');
+      }
+      
+      const exportFilters = buildExportFilters(filters || {});
+      const requestPayload = {
+        repos,
+        statuses: exportFilters.statuses,
+        coverageMin: exportFilters.coverageRange[0],
+        coverageMax: exportFilters.coverageRange[1],
+        includeEmptyCoverage: exportFilters.includeEmptyCoverage,
+        fileExtensions: exportFilters.fileExtensions,
+        excludeTestFiles: exportFilters.excludeTestFiles,
+        excludePatterns: exportFilters.excludePatterns,
+        includeCommitInfo: exportFilters.includeCommitInfo,
+        authorFilters: exportFilters.authorFilters,
+        authorTypeFilter: exportFilters.authorTypeFilter,
+        timeFrom: exportFilters.timeFrom,
+        timeTo: exportFilters.timeTo,
+        format,
+      };
+      
+      try {
+        const response = await createAsyncExportTask(requestPayload);
+        const taskData = response.data;
+        
+        // 设置当前任务
+        commit('setCurrentAsyncTask', taskData);
+        
+        // 添加到任务列表
+        commit('updateAsyncTaskStatus', { taskId: taskData.taskId, status: taskData });
+        
+        // 开始轮询状态
+        dispatch('startPollingTaskStatus', taskData.taskId);
+        
+        return taskData;
+      } catch (error) {
+        console.error('创建异步导出任务失败:', error);
+        throw new Error(`创建导出任务失败: ${error.message || error}`);
+      }
+    },
+
+    /**
+     * 开始轮询任务状态
+     */
+    startPollingTaskStatus({ commit, dispatch }, taskId) {
+      // 清除之前的轮询
+      commit('setPollingInterval', null);
+      
+      const interval = setInterval(async () => {
+        try {
+          const response = await getAsyncExportTaskStatus(taskId);
+          const taskStatus = response.data;
+          
+          // 更新任务状态
+          commit('updateAsyncTaskStatus', { taskId, status: taskStatus });
+          
+          // 如果任务完成，停止轮询
+          if (taskStatus.isFinished) {
+            commit('setPollingInterval', null);
+            
+            if (taskStatus.isDownloadable) {
+              // 自动下载文件
+              await dispatch('downloadAsyncExportFile', taskId);
+            }
+          }
+        } catch (error) {
+          console.error('轮询任务状态失败:', error);
+          // 轮询失败不停止，让用户手动重试
+        }
+      }, 2000); // 每2秒轮询一次
+      
+      commit('setPollingInterval', interval);
+    },
+
+    /**
+     * 停止轮询任务状态
+     */
+    stopPollingTaskStatus({ commit }) {
+      commit('setPollingInterval', null);
+    },
+
+    /**
+     * 下载异步导出文件
+     */
+    async downloadAsyncExportFile({ commit }, taskId) {
+      try {
+        const response = await downloadAsyncExportFile(taskId);
+        const filename = resolveFilenameFromResponse(response, `export-${taskId}.csv`);
+        downloadBlob(response.data, filename);
+        return filename;
+      } catch (error) {
+        console.error('下载异步导出文件失败:', error);
+        throw new Error(`下载文件失败: ${error.message || error}`);
+      }
+    },
+
+    /**
+     * 取消异步导出任务
+     */
+    async cancelAsyncExportTask({ commit, dispatch }, taskId) {
+      try {
+        await cancelAsyncExportTask(taskId);
+        
+        // 停止轮询
+        dispatch('stopPollingTaskStatus');
+        
+        // 从任务列表中移除
+        commit('removeAsyncTask', taskId);
+        
+        // 如果是当前任务，清空
+        if (taskId === commit('currentAsyncTask')?.taskId) {
+          commit('setCurrentAsyncTask', null);
+        }
+        
+        return true;
+      } catch (error) {
+        console.error('取消异步导出任务失败:', error);
+        throw new Error(`取消任务失败: ${error.message || error}`);
+      }
+    },
+
+    /**
+     * 获取所有异步导出任务
+     */
+    async fetchAllAsyncExportTasks({ commit }) {
+      commit('setLoadingAsyncExportTasks', true);
+      try {
+        const response = await getAllAsyncExportTasks();
+        const tasks = response.data?.tasks || [];
+        commit('setAsyncExportTasks', tasks);
+        return tasks;
+      } catch (error) {
+        console.error('获取异步导出任务列表失败:', error);
+        throw new Error(`获取任务列表失败: ${error.message || error}`);
+      } finally {
+        commit('setLoadingAsyncExportTasks', false);
+      }
+    },
+
+    /**
+     * 清理过期的异步导出任务
+     */
+    async cleanupExpiredAsyncExportTasks({ commit, dispatch }) {
+      try {
+        await cleanupExpiredAsyncExportTasks();
+        
+        // 重新获取任务列表
+        await dispatch('fetchAllAsyncExportTasks');
+        
+        return true;
+      } catch (error) {
+        console.error('清理过期异步导出任务失败:', error);
+        throw new Error(`清理过期任务失败: ${error.message || error}`);
+      }
+    },
+
+    /**
+     * 智能导出：根据数据量自动选择同步或异步导出
+     */
+    async smartExport({ commit, dispatch }, { repos, filters, format = 'csv' }) {
+      // 简单判断：如果选择的仓库数量超过3个或包含提交信息，使用异步导出
+      const shouldUseAsync = repos.length > 3 || (filters && filters.includeCommitInfo);
+      
+      if (shouldUseAsync) {
+        // 使用异步导出
+        return await dispatch('createAsyncExportTask', { repos, filters, format });
+      } else {
+        // 使用同步导出，但设置超时处理
+        return new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            // 同步导出超时，切换到异步导出
+            console.log('同步导出超时，切换到异步导出');
+            dispatch('createAsyncExportTask', { repos, filters, format })
+              .then(resolve)
+              .catch(reject);
+          }, 30000); // 30秒超时
+          
+          // 尝试同步导出
+          dispatch('exportMultiReport', { repos, filters, format })
+            .then(result => {
+              clearTimeout(timeout);
+              resolve(result);
+            })
+            .catch(error => {
+              clearTimeout(timeout);
+              reject(error);
+            });
+        });
+      }
+    },
+  },
+};

@@ -1,0 +1,38 @@
+﻿html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  background-color: #f5f7fa;
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+}
+
+.app-layout {
+  min-height: 100%;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.app-header__title {
+  font-size: 18px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+}
+
+.app-header__subtitle {
+  margin-left: 12px;
+  color: #909399;
+  font-size: 12px;
+}
+
+.app-content {
+  padding: 24px;
+  box-sizing: border-box;
+}
+@import './monaco-overrides.css';
+
