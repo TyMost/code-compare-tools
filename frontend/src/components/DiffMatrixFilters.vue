@@ -103,6 +103,7 @@
             <el-button 
               type="text" 
               size="mini" 
+              aria-label="删除规则"
               @click="removeExcludePattern(index)"
               class="diff-matrix-filters__pattern-remove"
             >
