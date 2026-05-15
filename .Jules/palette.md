@@ -1,0 +1,3 @@
+## 2024-05-15 - Missing ARIA Labels on Icon-only Buttons
+**Learning:** Found an accessibility issue pattern in the Element UI components implementation, where icon-only buttons (like `el-button` with `el-icon-delete` inside) are lacking `aria-label` and `title` attributes. This makes them inaccessible to screen readers and lacks tooltip information for visual users.
+**Action:** When adding or reviewing icon-only buttons in the application, ensure `aria-label` and `title` are added, following the `aria-label="Action Name"` and `title="Action Name"` pattern to provide both screen reader support and visual tooltip feedback.
