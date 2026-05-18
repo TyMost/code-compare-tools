@@ -1,0 +1,1 @@
+## 2024-05-18 - [Pattern] Added aria-label to Vue elements\n**Learning:** Element UI elements sometimes lack aria-label by default. Make sure to check these for accessibility improvements when dealing with Vue files. Adding 'title' as well improves tooltip usability.\n**Action:** Add aria-label and title to icon-only buttons in Vue components.
