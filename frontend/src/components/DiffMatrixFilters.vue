@@ -105,6 +105,8 @@
               size="mini" 
               @click="removeExcludePattern(index)"
               class="diff-matrix-filters__pattern-remove"
+              aria-label="删除规则"
+              title="删除规则"
             >
               <i class="el-icon-delete"></i>
             </el-button>
