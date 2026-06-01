@@ -1,0 +1,3 @@
+## 2026-06-01 - Vue Element-UI ARIA Limitations
+**Learning:** `el-input` in Element UI intercepts basic HTML attributes. Applying `aria-label` directly to `<el-input>` places it on the wrapper div, not the native `<input>`. To properly label the native input for screen readers without a visible label, one must use a slot injection hack: `<template slot="prepend"><span class="sr-only" :aria-label="..."></span></template>` or similar native-bridging.
+**Action:** When adding ARIA labels to Element UI components, verify the rendered DOM to ensure the accessibility attribute reaches the semantically correct native element.
