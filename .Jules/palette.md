@@ -1,0 +1,3 @@
+## 2024-06-04 - ARIA label and tooltips on icon-only buttons
+**Learning:** Found multiple instances of icon-only `el-button`s missing ARIA labels and title attributes in Vue components (e.g., DiffMatrixFilters.vue). Screen readers and sighted users benefit from these labels to clarify what the icon represents, especially with destructive actions like "delete".
+**Action:** Always verify that `<el-button>` elements containing only an `<i class="el-icon-*">` have an `aria-label` and `title` added, localized appropriately (e.g. `aria-label="删除规则"` for Chinese UIs).
