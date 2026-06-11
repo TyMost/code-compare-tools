@@ -1,0 +1,3 @@
+## 2024-06-11 - Adding ARIA attributes to dynamic form lists
+**Learning:** Dynamic lists with interactive controls (like adding/removing items) frequently lack accessibility labels. Specifically, elements using generic icons like el-icon-delete within v-for loops must have accessible names, such as aria-label and title, so screen reader users understand what object each button removes.
+**Action:** Whenever reviewing dynamically added rows with icon-only controls (e.g. exclude pattern lists), ensure input fields have aria-labels and icon-only delete/remove buttons have both aria-label and title to communicate their specific function.
