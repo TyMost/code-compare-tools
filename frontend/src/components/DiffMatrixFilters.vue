@@ -98,13 +98,16 @@
               v-model="localFilters.excludePatterns[index]"
               placeholder="如: *Test*.java 或 /.*\.test\.js/"
               size="mini"
-              class="diff-matrix-filters__pattern-input"
+              class="diff-matrix-filters__pattern-input" aria-label="自定义排除规则"
+
             />
             <el-button 
               type="text" 
               size="mini" 
               @click="removeExcludePattern(index)"
               class="diff-matrix-filters__pattern-remove"
+              aria-label="删除规则"
+              title="删除规则"
             >
               <i class="el-icon-delete"></i>
             </el-button>
