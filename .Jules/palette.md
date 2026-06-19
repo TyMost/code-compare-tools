@@ -1,0 +1,3 @@
+## 2026-06-19 - Localized Accessibility for Dynamic Element UI Components
+**Learning:** When using Element UI components inside a `v-for` loop, generic interactive elements (like inputs and icon-only buttons) must have localized context-specific ARIA labels. Standard HTML `aria-label` attributes added to custom components like `<el-input>` may not automatically pass down to the native `<input>`, requiring specific title bindings or ARIA workarounds.
+**Action:** Always ensure that dynamically rendered inputs and icon-only delete buttons explicitly include context-specific, localized `aria-label` and `title` attributes (e.g., '排除规则 1', '删除规则') when dealing with Element UI loops.
