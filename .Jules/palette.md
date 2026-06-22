@@ -1,0 +1,3 @@
+## 2024-05-15 - Missing Accessibility Labels in Dynamic Element UI Lists
+**Learning:** Dynamic lists rendered with `v-for` that contain interactive controls (like input fields or generic icon-only buttons) frequently lack proper context-specific accessibility labels. In Element UI specifically, standard attributes added to wrappers like `<el-input>` sometimes need careful checking, and standard `<el-button>`s used just for their icon (e.g., `el-icon-delete`) must include `aria-label` and `title` to be accessible.
+**Action:** When auditing or implementing dynamic lists of form inputs/actions, proactively ensure all inputs and icon-only buttons have localized `aria-label` and `title` attributes.
