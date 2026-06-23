@@ -1,0 +1,3 @@
+## 2026-06-23 - Element UI Component ARIA Label Mapping
+**Learning:** When adding `aria-label` to custom Element UI components like `<el-input>` in Vue 2, the attribute is often applied to the outer wrapper `div` rather than being passed down to the native `<input>` element. This can cause screen readers to miss the label if they are only looking at the native interactive element.
+**Action:** Be aware that standard HTML `aria-label` bindings on `<el-input>` may need alternative workarounds (like adding labels to wrappers or using specific component props if available) to ensure full screen reader compatibility.
