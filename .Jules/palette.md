@@ -1,0 +1,3 @@
+## 2024-06-24 - Missing ARIA Labels in Dynamic Lists
+**Learning:** When developing Vue components, dynamic lists rendered with `v-for` that contain interactive controls (like Element UI's `el-input` or generic icon-only buttons like `el-icon-delete`) frequently lack proper accessibility labels. Even if a pattern feels obvious visually, screen readers require explicit context. Standard HTML attributes like `aria-label` added directly to custom components might need specific bindings depending on how the component passes attributes down.
+**Action:** Audit dynamic list items explicitly for missing localized `aria-label` and `title` attributes on all form inputs and icon-only buttons to ensure they have context-specific accessibility support.
