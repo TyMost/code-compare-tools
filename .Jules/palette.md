@@ -1,0 +1,3 @@
+## 2024-05-30 - Dynamic Form Fields Accessibility
+**Learning:** Dynamic lists rendered with `v-for` that contain interactive controls frequently lack proper labels. Specifically, input fields and generic icon-only buttons (like Element UI’s `el-icon-delete`) within these loops must explicitly include context-specific, localized `aria-label` and `title` attributes (e.g. "删除规则") to ensure keyboard and screen reader accessibility.
+**Action:** When auditing Vue components (especially Element UI forms) for accessibility, look for `v-for` loops rendering `<el-input>` and `<el-button>` (especially icon-only ones) and verify they have `aria-label` and `title` attributes.
