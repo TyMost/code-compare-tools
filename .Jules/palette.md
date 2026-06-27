@@ -1,0 +1,3 @@
+## 2024-06-27 - Vue v-for lists with Element UI components lack accessible labels
+**Learning:** When using dynamic lists rendered with `v-for` in Vue that contain Element UI interactive components, such as `el-input` and icon-only buttons (like `el-icon-delete`), they frequently lack proper ARIA labels. This makes them inaccessible to screen readers as the context is lost.
+**Action:** Always ensure that input fields and generic icon-only buttons within `v-for` loops explicitly include context-specific, localized `aria-label` and `title` attributes. For example, use `:aria-label="'Input for item ' + (index + 1)"` for inputs and `aria-label="Delete item"` with `title="Delete item"` for buttons.
