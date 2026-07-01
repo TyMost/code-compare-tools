@@ -1,0 +1,3 @@
+## 2026-07-01 - Dynamic Control Accessibility in v-for Loops
+**Learning:** In Vue 2 with Element UI, interactive controls (like input fields and icon-only buttons) rendered dynamically within a `v-for` list often lack unique, context-specific accessibility labels. This makes it difficult for screen reader users to distinguish between multiple identical inputs or buttons (e.g., multiple "delete" buttons in a list of rules).
+**Action:** Always ensure that inputs and generic icon-only buttons inside `v-for` loops explicitly include localized `aria-label` and `title` attributes that incorporate loop variables (like `index + 1`) to provide clear, unique context (e.g., `:aria-label="'删除规则 ' + (index + 1)"`).
