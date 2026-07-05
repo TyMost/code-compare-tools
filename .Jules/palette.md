@@ -1,0 +1,3 @@
+## 2024-05-24 - Accessibility for Dynamic Lists and Icon Buttons
+**Learning:** Dynamic lists rendered with `v-for` that contain interactive controls (like `el-input` or icon-only buttons such as `el-icon-delete`) frequently lack proper labels, making them inaccessible to screen readers. Standard HTML attributes like `aria-label` and `title` must be explicitly added, and localized appropriately (e.g., using Chinese like '删除规则' for deletion actions in this UI).
+**Action:** Always ensure that inputs and generic icon-only buttons within `v-for` loops explicitly include context-specific, localized `aria-label` and `title` attributes to maintain strict accessibility standards.
