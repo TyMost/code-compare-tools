@@ -1,0 +1,3 @@
+## 2024-07-07 - Add accessibility labels to dynamic list controls
+**Learning:** When auditing Vue components for accessibility, dynamic lists rendered with `v-for` that contain interactive controls (such as input fields and generic icon-only buttons like Element UI's `el-icon-delete`) frequently lack proper labels. These controls become difficult or impossible to use for screen reader users because they don't have enough context.
+**Action:** Specifically ensure that input fields and generic icon-only buttons within these loops explicitly include context-specific, localized `aria-label` and `title` attributes (e.g., `:aria-label="\`自定义排除规则 ${index + 1}\`"` and `title="删除规则"`, `aria-label="删除规则"`).
