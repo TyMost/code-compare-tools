@@ -1,0 +1,3 @@
+## 2024-07-08 - Icon-Only Buttons in Dynamic Lists Lack Accessible Labels
+**Learning:** When auditing Vue components for accessibility, dynamic lists rendered with `v-for` that contain interactive controls frequently lack proper labels. Specifically ensure that generic icon-only buttons (like Element UI's `el-icon-delete`) within these loops explicitly include context-specific, localized `aria-label` and `title` attributes.
+**Action:** Before implementing `v-for` driven lists with embedded controls, check for icon-only components. Add standard `aria-label` and `title` to those items to ensure screen readers provide accurate localized descriptors (e.g., "删除规则" rather than reading out the generic icon class).
