@@ -1,0 +1,3 @@
+## 2026-07-12 - Vue 2 Element UI Input Accessibility Fallbacks
+**Learning:** In Vue 2 with Element UI, standard HTML attributes like `aria-label` added directly to custom components like `<el-input>` may not be passed down automatically to the native underlying `<input>` element. However, the `title` attribute does successfully propagate down and can serve as a viable accessibility fallback for screen readers and tooltips when native `aria-label` injection fails without custom directives.
+**Action:** Always provide `title` alongside `aria-label` when applying accessibility enhancements to Vue 2 Element UI custom input components to ensure screen readers receive the necessary context.
