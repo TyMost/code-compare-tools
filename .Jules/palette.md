@@ -1,0 +1,3 @@
+## 2025-02-18 - Missing ARIA Labels in Dynamic Lists
+**Learning:** In Vue 2 with Element UI, interactive controls (like `el-input` and generic icon-only buttons like `el-button` with `el-icon-delete`) within `v-for` dynamic loops frequently lack proper labels. Native `aria-label` may not pass down through custom components, so adding `title` attributes acts as a crucial accessibility fallback for screen readers and tooltips.
+**Action:** Always ensure that input fields and icon-only buttons within `v-for` loops explicitly include context-specific, localized `aria-label` and `title` attributes (e.g. `aria-label="删除规则"` and `title="删除规则"`).
