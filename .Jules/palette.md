@@ -1,0 +1,3 @@
+## 2026-07-16 - Dynamic List Accessibility in Vue/Element UI
+**Learning:** Dynamic lists rendered with `v-for` that contain interactive controls (like Element UI's `el-input` and `el-button`) frequently lack proper labels, making them inaccessible to screen readers. Standard HTML attributes like `aria-label` added directly to custom components like `<el-input>` may not be passed down automatically to the native underlying `<input>` element, but the `title` attribute successfully propagates down and serves as a viable fallback.
+**Action:** Always ensure that input fields and generic icon-only buttons (like `el-icon-delete`) within `v-for` loops explicitly include context-specific, localized `aria-label` and `title` attributes.
