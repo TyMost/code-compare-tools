@@ -1,0 +1,3 @@
+## 2024-07-19 - Accessibility for Dynamic Element UI Components in Vue 2
+**Learning:** In Vue 2 with Element UI, standard HTML attributes like `aria-label` added directly to custom components (like `<el-input>` or `<el-button>`) within dynamic lists rendered with `v-for` may not always be propagated reliably to the native underlying DOM elements. Icon-only buttons or inputs inside these loops frequently lack proper labels for screen readers.
+**Action:** Always include a `title` attribute in addition to `aria-label` as a viable accessibility fallback for screen readers and tooltips when using Element UI components in these dynamic contexts. Ensure the copy is localized properly (e.g., in Chinese: "删除规则").
