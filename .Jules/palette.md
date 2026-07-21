@@ -1,0 +1,3 @@
+## 2026-07-21 - Added Accessibility Attributes to DiffMatrixFilters
+**Learning:** Found an accessibility issue pattern specific to this app's components: dynamic lists rendered with `v-for` that contain interactive controls (like `el-input` and generic icon-only buttons like `el-icon-delete`) frequently lack proper labels. Also, the frontend UI is primarily localized in Chinese, so ARIA labels and tooltips should match the existing interface language.
+**Action:** Always verify that input fields and generic icon-only buttons within `v-for` loops explicitly include context-specific, localized `aria-label` and `title` attributes.
