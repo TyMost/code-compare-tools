@@ -1,0 +1,3 @@
+## 2024-05-24 - Dynamic ARIA labels in Element UI v-for loops
+**Learning:** When using Element UI custom components (like `<el-input>`) inside a Vue 2 `v-for` loop, dynamically binding `:aria-label` may not pass down properly to the native inner `<input>` element. However, `:title` attributes do pass through and can act as an effective accessibility fallback for screen readers, as well as providing visual tooltips. Ensure dynamic labels use unique indices (e.g., ``:title="`排除规则 ${index + 1}`"``) so screen readers can distinguish between identically structured inputs in the list.
+**Action:** Always add both `:aria-label` and `:title` to custom interactive components within loops, ensuring template literals make each item distinct based on the loop index or content.
