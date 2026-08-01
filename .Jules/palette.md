@@ -1,0 +1,3 @@
+## 2024-05-24 - Missing labels in dynamic lists for icon buttons
+**Learning:** When auditing Vue components for accessibility, dynamic lists rendered with `v-for` that contain interactive controls frequently lack proper labels. Specifically ensure that generic icon-only buttons (like Element UI's `el-icon-delete`) within these loops explicitly include context-specific, localized `aria-label` and `title` attributes.
+**Action:** When adding `aria-label` or `title` attributes inside Vue `v-for` loops, ensure uniqueness by using template literals that append the loop index or distinct item content (e.g., `:aria-label="\`删除规则 ${index + 1}\`"`) to aid screen reader distinction.
