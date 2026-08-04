@@ -1,0 +1,3 @@
+## 2025-02-18 - Ensure unique aria-labels for dynamic list inputs and icon buttons
+**Learning:** Dynamic lists rendered with `v-for` that contain interactive controls (like input fields and generic icon-only buttons) frequently lack proper labels for screen readers. It is crucial to append the loop index or distinct item content to ensure each element has a unique `aria-label` and `title` attribute.
+**Action:** When creating or maintaining `v-for` lists in Vue, always check that interactive elements inside the loop receive unique accessibility attributes (e.g., using `:aria-label="\`删除规则 ${index + 1}\`"`).
