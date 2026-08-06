@@ -1,0 +1,3 @@
+## 2024-05-24 - Accessibility Patterns in Dynamic Lists
+**Learning:** In Vue 2 with Element UI, elements in dynamic lists (`v-for`) containing generic interactive components (like `el-input` and icon-only `el-button`) require unique labels to be accessible. Since `aria-label` applied to `<el-input>` doesn't automatically pass down to the native underlying `<input>`, setting the `title` attribute is necessary as an accessibility fallback. Also, these labels must be unique per iteration, achieved using template literals (e.g., `:title="\`删除规则 ${index + 1}\`"`).
+**Action:** Always ensure dynamic `v-for` interactive elements have unique, localized `aria-label` and `title` attributes that incorporate the loop index or unique context.
