@@ -1,0 +1,3 @@
+## 2026-08-11 - Accessibility labels in Vue dynamic v-for lists
+**Learning:** Dynamic lists rendered with `v-for` that contain interactive controls frequently lack proper labels. In Vue 2 with Element UI, `title` is a reliable fallback for tooltips/screen readers since `aria-label` might not propagate to underlying native elements.
+**Action:** When auditing components for a11y, always ensure that inputs and generic icon-only buttons within `v-for` loops include context-specific, localized `aria-label` and `title` attributes using template literals (e.g., `:aria-label="\`删除规则 ${index + 1}\`"`).
