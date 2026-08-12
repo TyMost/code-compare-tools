@@ -1,0 +1,3 @@
+## 2024-11-20 - Adding dynamic ARIA labels in Element UI loops
+**Learning:** In Element UI components like `<el-input>` and `<el-button>` inside a `v-for` loop, standard screen reader focus can lack sufficient context. Icon-only buttons or dynamic inputs need unique, context-aware identifiers. While `aria-label` is not always properly propagated by some Element UI components, providing a fallback `title` ensures a tooltip and basic accessibility.
+**Action:** When adding labels within loops, use template literals (e.g. `:title="\`删除规则 ${index + 1}\`"`) to create distinct, localized screen reader cues and tooltips.
