@@ -1,0 +1,3 @@
+## 2024-08-13 - Unique Accessibility Labels in v-for Loops
+**Learning:** When rendering interactive controls like input fields and generic icon-only buttons (e.g., delete buttons) inside a Vue `v-for` loop, these elements frequently lack unique, context-specific accessible names. If the same label is repeated for every item, screen reader users cannot distinguish between them.
+**Action:** Append the loop index or distinct item content (e.g., `:aria-label="\`删除规则 ${index + 1}\`"`) to the `aria-label` and `title` attributes of elements within `v-for` loops to ensure unique identification for assistive technologies.
