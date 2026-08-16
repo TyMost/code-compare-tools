@@ -1,0 +1,3 @@
+## 2024-03-24 - Vue 2 v-for Element UI Input Labels
+**Learning:** In Vue 2 with Element UI, adding `aria-label` directly to `<el-input>` inside a `v-for` loop might not propagate down correctly, but using the `title` attribute acts as a reliable fallback. In dynamic loops, template literals like `:title="\`排除规则 ${index + 1}\`"` are necessary to ensure screen readers uniquely identify each input instance.
+**Action:** Always bind both `:aria-label` and `:title` uniquely (using an index or ID) when creating interactive elements (like inputs and delete buttons) inside Vue `v-for` loops to maximize accessibility.
