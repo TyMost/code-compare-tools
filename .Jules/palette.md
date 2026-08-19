@@ -1,0 +1,3 @@
+## 2024-05-14 - A11y in Vue v-for loops
+**Learning:** When using Element UI components like el-input or icon-only el-buttons inside dynamic lists rendered with v-for, standard ARIA labels can be ambiguous for screen readers. Standard HTML attributes like aria-label added directly to custom components like <el-input> may not be passed down automatically to the native underlying <input> element. However, the title attribute does successfully propagate down.
+**Action:** Always ensure that input fields and generic icon-only buttons within loops explicitly include context-specific, localized aria-label and title attributes (e.g., using template literals that append the loop index or distinct item content like `:aria-label="\`删除规则 ${index + 1}\`"`).
