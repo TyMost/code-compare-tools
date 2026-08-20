@@ -1,0 +1,4 @@
+## 2024-05-18 - Context-Specific Labels for Vue 2 v-for Dynamic Elements
+**Learning:** When generating interactive elements inside a Vue 2 `v-for` loop using Element UI components (like `<el-input>` and `<el-button>`), standard `aria-label` may not always propagate down to the native DOM element. However, screen readers and usability can be significantly improved by injecting context-specific string interpolation (e.g., `:aria-label="\`排除规则 ${index + 1}\`"` and `:title="\`排除规则 ${index + 1}\`"`) directly into the elements. The `title` attribute works as an accessible tooltip fallback when `aria-label` is swallowed by custom component wrappers.
+
+**Action:** Always bind both `:aria-label` and `:title` to custom UI components inside lists/loops using dynamic index or text content to ensure each repeated instance is uniquely identifiable to screen readers and visually impaired users.
