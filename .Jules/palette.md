@@ -1,0 +1,3 @@
+## 2026-08-21 - Accessible Dynamic Lists in Vue Element UI
+**Learning:** When generating dynamic lists containing generic icon-only buttons (like `el-icon-delete` inside a `v-for`), Element UI components often lack out-of-the-box context for screen readers. Simply adding a static label is insufficient.
+**Action:** Always use template literals combined with the loop index or item content (e.g., `:aria-label="\`删除规则 ${index + 1}\`"`) when adding `aria-label` and `title` to repeated generic icons to provide unique, context-aware announcements. Ensure labels match the existing interface localization (e.g. Chinese).
