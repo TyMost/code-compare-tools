@@ -1,0 +1,3 @@
+## 2024-05-24 - Accessibility for Icon-Only Buttons in Loops
+**Learning:** Generic icon-only buttons (like `el-icon-delete`) inside `v-for` loops often lack proper accessibility contexts, making them indistinguishable for screen readers. Standard HTML attributes like `aria-label` may not pass down through custom components like `<el-input>`, but `title` attributes generally do and act as a reliable fallback.
+**Action:** Always add both `aria-label` and `title` with unique identifiers (e.g., using the loop index or item name, like `` `删除规则 ${index + 1}` ``) to interactive controls within dynamic lists.
