@@ -1,0 +1,3 @@
+## 2024-05-24 - Dynamic List Accessibility
+**Learning:** Dynamic lists rendered with `v-for` that contain interactive controls frequently lack proper labels. Specifically ensure that input fields and generic icon-only buttons (like Element UI's `el-icon-delete`) within these loops explicitly include context-specific, localized `aria-label` and `title` attributes using template literals that append the loop index or distinct item content (e.g., `:aria-label="\`删除规则 ${index + 1}\`"`) to aid screen reader distinction.
+**Action:** When auditing Vue components for accessibility, always check `v-for` loops for interactive elements and add dynamic, unique `aria-label` and `title` attributes using the item index or content.
