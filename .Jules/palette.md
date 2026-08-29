@@ -1,0 +1,3 @@
+## 2026-08-29 - Missing Accessibility Labels in Dynamic Control Lists
+**Learning:** Dynamic lists rendered with `v-for` that contain interactive controls (like delete buttons or input fields) frequently lack proper labels, making them difficult for screen reader users to distinguish. Adding dynamic ARIA labels (e.g., using loop index) solves this but often gets overlooked.
+**Action:** Audit Vue components containing `v-for` loops with generic icon-only buttons (like Element UI's `el-icon-delete`) to ensure they explicitly include context-specific, localized `aria-label` and `title` attributes.
