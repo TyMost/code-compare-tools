@@ -99,12 +99,16 @@
               placeholder="如: *Test*.java 或 /.*\.test\.js/"
               size="mini"
               class="diff-matrix-filters__pattern-input"
+              :title="`排除规则 ${index + 1}`"
+              :aria-label="`排除规则 ${index + 1}`"
             />
             <el-button 
               type="text" 
               size="mini" 
               @click="removeExcludePattern(index)"
               class="diff-matrix-filters__pattern-remove"
+              :title="`删除规则 ${index + 1}`"
+              :aria-label="`删除规则 ${index + 1}`"
             >
               <i class="el-icon-delete"></i>
             </el-button>
