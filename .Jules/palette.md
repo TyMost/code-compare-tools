@@ -1,0 +1,3 @@
+## 2024-05-18 - Ensure unique ARIA labels in dynamic `v-for` lists
+**Learning:** When using dynamic lists (`v-for`) with interactive elements like inputs or icon-only buttons (e.g. `<el-input>`, `<el-button>`), screen readers may not differentiate between multiple identical items if they all have the same or no ARIA label. Element UI components may need `title` attributes as a fallback since standard `aria-label` attributes might not propagate to native `<input>`s properly in all components.
+**Action:** Always append the loop index or unique item content (e.g., `:aria-label="\`删除规则 ${index + 1}\`"` and `:title="\`删除规则 ${index + 1}\`"`) to inputs and buttons within `v-for` loops to ensure they are uniquely identifiable for accessibility and tooltips.
