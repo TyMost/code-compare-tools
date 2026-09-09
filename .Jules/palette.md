@@ -1,0 +1,3 @@
+## 2024-09-09 - Accessibility for Dynamic Element UI Forms
+**Learning:** When generating interactive controls (inputs and icon-only delete buttons) inside Vue `v-for` loops (e.g., custom exclude patterns in DiffMatrixFilters), they frequently lack unique, identifiable labels for screen readers. Standard Element UI `<el-button>` elements wrapping icons (`<i class="el-icon-delete"></i>`) require both `:aria-label` and `title` attributes.
+**Action:** Always append the loop index (e.g., `:aria-label="\`删除规则 ${index + 1}\`"`) when dynamically rendering repetitive controls to ensure each element is uniquely identifiable to assistive technologies.
